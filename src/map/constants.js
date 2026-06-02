@@ -85,6 +85,10 @@ export const TILE = {
 
   // 浆果丛
   BERRY: 51,                // 浆果丛
+
+  // 船（动态精灵，不属于区块系统）
+  SHIP: 61,                 // 船
+  PIRATE_SHIP: 62,          // 海盗船
 };
 
 // ────────────────────────────────────────────
@@ -152,6 +156,8 @@ export const TILE_NAMES = {
   [TILE.HILL_BL]: '山坡(左下)',
   [TILE.HILL_BC]: '山坡(中下)',
   [TILE.HILL_BR]: '山坡(右下)',
+  [TILE.SHIP]: '船',
+  [TILE.PIRATE_SHIP]: '海盗船',
 };
 
 // ────────────────────────────────────────────
@@ -219,6 +225,8 @@ export const TILE_COLORS = {
   [TILE.HILL_BL]: 0x6B5344,
   [TILE.HILL_BC]: 0x6B5344,
   [TILE.HILL_BR]: 0x6B5344,
+  [TILE.SHIP]: 0x8B6914,
+  [TILE.PIRATE_SHIP]: 0x4A3728,
 };
 
 // ────────────────────────────────────────────
@@ -229,14 +237,14 @@ export const TILE_ASSETS = {
   [TILE.GRASS_1]: 'assets/草1.png',
   [TILE.GRASS_2]: 'assets/草2.png',
   [TILE.WATER]: 'assets/水.png',
-  [TILE.CORNER_TL]: 'assets/池塘圆角.png',
-  [TILE.CORNER_TR]: 'assets/池塘圆角.png',
-  [TILE.CORNER_BR]: 'assets/池塘圆角.png',
-  [TILE.CORNER_BL]: 'assets/池塘圆角.png',
-  [TILE.EDGE_T]: 'assets/池塘边缘中段.png',
-  [TILE.EDGE_R]: 'assets/池塘边缘中段.png',
-  [TILE.EDGE_B]: 'assets/池塘边缘中段.png',
-  [TILE.EDGE_L]: 'assets/池塘边缘中段.png',
+  [TILE.CORNER_TL]: 'assets/沙滩西北圆角.png',
+  [TILE.CORNER_TR]: 'assets/沙滩东北圆角.png',
+  [TILE.CORNER_BR]: 'assets/沙滩西北圆角.png',
+  [TILE.CORNER_BL]: 'assets/沙滩东北圆角.png',
+  [TILE.EDGE_T]: 'assets/沙滩北边.png',
+  [TILE.EDGE_R]: 'assets/沙滩北边.png',
+  [TILE.EDGE_B]: 'assets/沙滩北边.png',
+  [TILE.EDGE_L]: 'assets/沙滩北边.png',
   [TILE.ROAD_H]: 'assets/直路.png',
   [TILE.ROAD_V]: 'assets/直路.png',
   [TILE.ROAD_CORNER_TL]: 'assets/路拐角.png',
@@ -286,6 +294,8 @@ export const TILE_ASSETS = {
   [TILE.HILL_BL]: 'assets/山坡左下.png',
   [TILE.HILL_BC]: 'assets/山坡中下.png',
   [TILE.HILL_BR]: 'assets/山坡右下.png',
+  [TILE.SHIP]: 'assets/船.png',
+  [TILE.PIRATE_SHIP]: 'assets/海盗船.png',
 };
 
 // ────────────────────────────────────────────
@@ -320,14 +330,25 @@ export const TILE_ROTATION = {
   [TILE.GRASS_1]: 0,
   [TILE.GRASS_2]: 0,
   [TILE.WATER]: 0,
-  [TILE.CORNER_TL]: 0,
-  [TILE.CORNER_TR]: Math.PI / 2,
-  [TILE.CORNER_BR]: Math.PI,
-  [TILE.CORNER_BL]: Math.PI * 3 / 2,
-  [TILE.EDGE_T]: 0,
-  [TILE.EDGE_R]: Math.PI / 2,
-  [TILE.EDGE_B]: Math.PI,
-  [TILE.EDGE_L]: Math.PI * 3 / 2,
+  // 沙滩圆角：沙滩西北圆角.png（原图水在左上/西北，沙滩在右下）
+  //   CORNER_BR 需要水在左上 → 不旋转(0°)
+  //   CORNER_TL 需要水在右下 → 旋转180°(水左上→右下)
+  // 沙滩东北圆角.png（原图水在右上/东北，沙滩在左下）
+  //   CORNER_BL 需要水在右上 → 不旋转(0°)
+  //   CORNER_TR 需要水在左下 → 旋转180°(水右上→左下)
+  [TILE.CORNER_TL]: Math.PI,
+  [TILE.CORNER_TR]: Math.PI,
+  [TILE.CORNER_BR]: 0,
+  [TILE.CORNER_BL]: 0,
+  // 沙滩北边.png（原图水在上/北，沙滩在下/南）
+  //   EDGE_B 需要水在上 → 不旋转(0°)
+  //   EDGE_T 需要水在下 → 旋转180°(水上→下)
+  //   EDGE_L 需要水在右 → 旋转90°(水上→右)
+  //   EDGE_R 需要水在左 → 旋转270°(水上→左)
+  [TILE.EDGE_T]: Math.PI,
+  [TILE.EDGE_R]: Math.PI * 3 / 2,
+  [TILE.EDGE_B]: 0,
+  [TILE.EDGE_L]: Math.PI / 2,
   [TILE.ROAD_H]: 0,
   [TILE.ROAD_V]: Math.PI / 2,
   [TILE.ROAD_CORNER_TL]: Math.PI,
@@ -381,6 +402,9 @@ export const TILE_ROTATION = {
   [TILE.HILL_BL]: 0,
   [TILE.HILL_BC]: 0,
   [TILE.HILL_BR]: 0,
+  // 船旋转由 ShipSprite 动态控制，此处不设默认值
+  [TILE.SHIP]: 0,
+  [TILE.PIRATE_SHIP]: 0,
 };
 
 // ────────────────────────────────────────────
@@ -424,6 +448,15 @@ export const FOREST_CONFIG = {
   edgeChance: 0.7,
   /** 核心树木概率（forestDensity=1时） */
   coreChance: 1.0,
+};
+
+// ────────────────────────────────────────────
+// 水域生成配置
+// ────────────────────────────────────────────
+export const WATER_CONFIG = {
+  /** 水域起始世界X坐标（岸线位置）：worldX >= shoreX 的区域为水域 */
+  /** 大约2~3屏宽度右侧（1屏≈30瓦片，2.5屏≈80瓦片） */
+  shoreX: 80,
 };
 
 // ────────────────────────────────────────────

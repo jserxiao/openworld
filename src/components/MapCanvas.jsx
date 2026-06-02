@@ -53,9 +53,10 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
         renderer.setOnTileHover(onTileHover);
       }
 
-      // 4. 首次渲染
-      renderer.centerOn(0, 0);
-      renderer.renderInitial();
+      // 4. 首次渲染（异步加载区块，Worker 生成完后自动渲染）
+      // 将初始视口定位到岸线附近，让草地/沙滩/水域同时可见
+      renderer.centerOnShoreline();
+      renderer.renderInitial(); // 异步，不等所有区块完成
 
       setLoading(false);
 

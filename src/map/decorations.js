@@ -55,6 +55,33 @@ export function isBushTile(tile) {
 }
 
 /**
+ * 判断瓦片是否是深水类型
+ * @param {number} tile
+ * @returns {boolean}
+ */
+export function isWaterTile(tile) {
+  return tile === TILE.WATER;
+}
+
+/**
+ * 判断瓦片是否是沙滩边缘类型
+ * @param {number} tile
+ * @returns {boolean}
+ */
+export function isBeachTile(tile) {
+  return tile >= TILE.CORNER_TL && tile <= TILE.EDGE_L;
+}
+
+/**
+ * 判断瓦片是否属于水域区域（深水或沙滩）
+ * @param {number} tile
+ * @returns {boolean}
+ */
+export function isWaterAreaTile(tile) {
+  return tile === TILE.WATER || (tile >= TILE.CORNER_TL && tile <= TILE.EDGE_L);
+}
+
+/**
  * 在地图上随机生成装饰物
  * 只会在草地格子上放置，不覆盖道路、已有装饰物等
  * 支持聚集效应：少量概率在已有装饰物附近密集出现
