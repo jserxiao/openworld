@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState, useCallback } from 'react';
+import { useMemo, useRef, useCallback } from 'react';
 import MapCanvas from './components/MapCanvas';
+import { useGameStore } from './map/gameStore';
 
 // 森林默认配置（模块级常量，避免每次渲染重新创建对象）
 const DEFAULT_MAP_OPTIONS = {
@@ -15,26 +16,21 @@ const DEFAULT_MAP_OPTIONS = {
 
 export default function App() {
   const mapRef = useRef(null);
-  const [viewportInfo, setViewportInfo] = useState(null);
-  const [hoveredTile, setHoveredTile] = useState(null);
 
   // 使用 useMemo 避免 mapOptions 每次渲染重新创建
   const mapOptions = useMemo(() => DEFAULT_MAP_OPTIONS, []);
 
-  const handleViewportChange = useCallback((info) => {
-    setViewportInfo(info);
-  }, []);
+  // ── Zustand 状态：用 selector 精确订阅，避免不必要的 re-render ──
+  const viewportInfo = useGameStore((s) => s.viewportInfo);
+  const hoveredTile = useGameStore((s) => s.hoveredTile);
 
-  const handleTileHover = useCallback((tileX, tileY, tileType) => {
-    setHoveredTile({ tileX, tileY, tileType });
-  }, []);
+  // MapCanvas 不再需要回调 props，状态通过事件总线 + Zustand 自动同步
+  // 但保留 ref 方法接口供外部使用
 
   return (
     <>
       <MapCanvas
         ref={mapRef}
-        onViewportChange={handleViewportChange}
-        onTileHover={handleTileHover}
         mapOptions={mapOptions}
       />
 

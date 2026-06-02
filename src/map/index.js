@@ -41,6 +41,15 @@ export { InteractionController } from './interaction';
 // 素材加载
 export { AssetLoader } from './assetLoader';
 
+// 精灵图集
+export { AtlasBuilder } from './atlasBuilder';
+
+// 对象池
+export { ObjectPool, createSpritePool, createContainerPool } from './objectPool';
+
+// 空间哈希
+export { SpatialHash } from './spatialHash';
+
 // 船精灵
 export { Ship, ShipFleet } from './ship';
 

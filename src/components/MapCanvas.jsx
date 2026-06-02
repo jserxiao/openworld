@@ -1,19 +1,17 @@
-import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { MapCanvasRenderer } from '../map/renderer';
+import { startEventBridge, stopEventBridge } from '../map/gameStore';
+import { useGameStore } from '../map/gameStore';
+import { gameEvents, GameEvent } from '../map/eventBus';
 
-const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover, mapOptions }, ref) {
+const MapCanvas = forwardRef(function MapCanvas({ mapOptions }, ref) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
   const initRef = useRef(false);
-  const [loading, setLoading] = useState(true);
 
-  // 使用 useRef 保存回调引用，避免闭包过时问题
-  const onViewportChangeRef = useRef(onViewportChange);
-  const onTileHoverRef = useRef(onTileHover);
-
-  // 每次渲染更新 ref
-  onViewportChangeRef.current = onViewportChange;
-  onTileHoverRef.current = onTileHover;
+  // Zustand
+  const loading = useGameStore((s) => s.loading);
+  const setLoading = useGameStore((s) => s.setLoading);
 
   // 重置视图
   const resetView = useCallback(() => {
@@ -46,6 +44,9 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
     const renderer = new MapCanvasRenderer(mapOptions);
     rendererRef.current = renderer;
 
+    // 启动事件总线 → Zustand 桥接
+    startEventBridge();
+
     const init = async () => {
       // 1. 初始化画布
       await renderer.init(containerRef.current);
@@ -53,13 +54,7 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
       // 2. 加载素材
       await renderer.loadAssets();
 
-      // 3. 注册回调（使用 ref.current 确保始终获取最新回调）
-      renderer.setOnViewportChange((info) => {
-        if (onViewportChangeRef.current) onViewportChangeRef.current(info);
-      });
-      renderer.setOnTileHover((tileX, tileY, tileType) => {
-        if (onTileHoverRef.current) onTileHoverRef.current(tileX, tileY, tileType);
-      });
+      // 3. 回调已通过事件总线自动桥接到 Zustand，无需手动注册
 
       // 4. 首次渲染（异步加载区块，Worker 生成完后自动渲染）
       // 将初始视口定位到岸线附近，让草地/沙滩/水域同时可见
@@ -74,9 +69,10 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
       const tickerFn = () => {
         frameCount++;
         if (frameCount % 10 !== 0) return;
-        if (onViewportChangeRef.current) {
-          const info = renderer.getViewportInfo();
-          if (info) onViewportChangeRef.current(info);
+        // 直接获取视口信息通过事件总线同步到 Zustand
+        const info = renderer.getViewportInfo();
+        if (info) {
+          gameEvents.emit(GameEvent.VIEWPORT_INFO, info);
         }
       };
       if (ticker) ticker.add(tickerFn);
@@ -90,11 +86,12 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
     init();
 
     return () => {
+      stopEventBridge();
       if (renderer._cleanup) renderer._cleanup();
       renderer.destroy();
       initRef.current = false;
     };
-  }, [mapOptions]);
+  }, [mapOptions, setLoading]);
 
   return (
     <>

@@ -19,8 +19,12 @@ import { ChunkManager } from './chunk';
 import { Viewport } from './viewport';
 import { InteractionController } from './interaction';
 import { AssetLoader } from './assetLoader';
-import { ShipFleet } from './ship';
-import { isRoadTile, isHillTile, isBeachTile, isDecorSprite } from './tileUtils';
+import { ShipFleetECS as ShipFleet } from './ecs';
+import { isRoadTile, isHillTile, isBeachTile, isDecorSprite, isTreeTile, isDecorationTile } from './tileUtils';
+import { gameEvents, GameEvent } from './eventBus';
+import { createSpritePool, createContainerPool } from './objectPool';
+import { LODManager } from './lodManager';
+import { DecorSpatialIndex } from './decorSpatialIndex';
 
 export class MapCanvasRenderer {
   /**
@@ -60,9 +64,24 @@ export class MapCanvasRenderer {
     /** @type {ShipFleet|null} */
     this._shipFleet = null;
 
-    // ── 回调 ──
-    this._onViewportChange = null;
-    this._onTileHover = null;
+    // ── 事件监听清理函数 ──
+    this._eventUnsubs = [];
+
+    // ── 图集纹理引用（销毁时需释放） ──
+    this._atlasTexture = null;
+    this._atlasEnabled = false;
+
+    // ── 对象池（复用精灵和容器，减少 GC 压力） ──
+    this._spritePool = createSpritePool({ maxSize: 4096 });
+    this._containerPool = createContainerPool({ maxSize: 256 });
+
+    // ── LOD 管理器（根据缩放调整渲染精度） ──
+    this._lod = new LODManager();
+    /** 当前 LOD 级别的 RenderTexture 分辨率 */
+    this._currentRTResolution = 1.0;
+
+    // ── 装饰层空间索引（替代全量遍历+排序） ──
+    this._decorIndex = new DecorSpatialIndex();
 
     // ── 窗口 resize 监听 ──
     this._onResize = null;
@@ -127,10 +146,8 @@ export class MapCanvasRenderer {
       tileSize: this.tileSize,
       onViewportMoved: () => this._onViewportMoved(),
       onTileHover: (tileX, tileY) => {
-        if (this._onTileHover) {
-          const tile = this.chunkManager.getTile(tileX, tileY);
-          this._onTileHover(tileX, tileY, tile);
-        }
+        const tile = this.chunkManager.getTile(tileX, tileY);
+        gameEvents.emit(GameEvent.TILE_HOVER, { tileX, tileY, tileType: tile });
       },
       screenToWorldTile: (sx, sy) => this._viewport.screenToWorldTile(sx, sy),
     });
@@ -139,6 +156,8 @@ export class MapCanvasRenderer {
     this.chunkManager.setOnChunkReady((chunk) => {
       this._onChunkReady(chunk);
     });
+
+    // ── 事件总线：仅做 emit，UI 层直接订阅 GameEvent.VIEWPORT_INFO ──
   }
 
   /**
@@ -171,11 +190,25 @@ export class MapCanvasRenderer {
       this._shipFleet.updateViewport(this._viewport.state);
     }
 
-    if (this._onViewportChange) {
-      this._onViewportChange(this.getViewportInfo());
+    // 更新 LOD 级别
+    const lodChanged = this._lod.update(this._viewport.state.zoom);
+    if (lodChanged) {
+      this._currentRTResolution = this._lod.resolution;
+      // LOD 级别变化时需要重新渲染所有可见区块容器
+      if (this._lod.level === 2 && this._decorContainer) {
+        // Low LOD: 隐藏整个装饰层
+        this._decorContainer.visible = false;
+      } else if (this._decorContainer) {
+        this._decorContainer.visible = true;
+      }
+      // 重新渲染所有区块以应用新的 RenderTexture 分辨率
+      this._rerenderAllChunks();
     }
+
+    gameEvents.emit(GameEvent.VIEWPORT_MOVED, this._viewport.state);
+    gameEvents.emit(GameEvent.VIEWPORT_INFO, this.getViewportInfo());
     // 节流重建装饰层
-    if (!this._decorRebuildPending) {
+    if (!this._decorRebuildPending && this._lod.showDecorations) {
       this._decorRebuildPending = true;
       requestAnimationFrame(() => {
         this._rebuildDecorLayer();
@@ -243,7 +276,7 @@ export class MapCanvasRenderer {
   }
 
   /**
-   * 移除指定区块容器并释放资源
+   * 移除指定区块容器并释放资源（归还对象池）
    * @private
    * @param {string} key - 区块key
    */
@@ -251,25 +284,34 @@ export class MapCanvasRenderer {
     const container = this._chunkContainers.get(key);
     if (!container) return;
 
-    // 移除装饰物精灵
-    if (container._decorSprites && this._decorContainer) {
-      for (const { sprite } of container._decorSprites) {
-        this._decorContainer.removeChild(sprite);
-        sprite.destroy();
+    // 从空间索引中移除该区块的装饰物
+    const removedEntries = this._decorIndex.removeChunk(key);
+
+    // 移除装饰物精灵，归还对象池
+    if (this._decorContainer) {
+      for (const entry of removedEntries) {
+        this._decorContainer.removeChild(entry.sprite);
+        this._spritePool.release(entry.sprite);
       }
     }
-    // 释放 RenderTexture
+    // 释放 RenderTexture（不归池，GPU资源必须销毁）
     const groundSprite = container._groundSprite;
     if (groundSprite && groundSprite.texture) {
       groundSprite.texture.destroy(true);
     }
+    // 归还 groundSprite 到精灵池
+    if (groundSprite) {
+      this._spritePool.release(groundSprite);
+    }
     this.mapContainer.removeChild(container);
-    container.destroy({ children: true });
+    // 归还容器到容器池
+    this._containerPool.release(container);
     this._chunkContainers.delete(key);
   }
 
   /**
    * 为单个区块创建 PIXI 容器
+   * 使用对象池复用精灵对象，减少 GC 压力
    * @private
    */
   _renderChunkContainer(chunk) {
@@ -296,6 +338,9 @@ export class MapCanvasRenderer {
     // 收集装饰物（用于全局y排序）
     const decorSprites = [];
 
+    // 临时收集地面精灵引用（烘焙后归还池）
+    const groundSprites = [];
+
     for (let ly = 0; ly < S; ly++) {
       for (let lx = 0; lx < S; lx++) {
         const tile = chunk.map[ly][lx];
@@ -305,42 +350,51 @@ export class MapCanvasRenderer {
         // 装饰物：先铺草地底图，装饰物精灵单独收集
         if (isDecorSprite(tile)) {
           const grassTile = chunk.grassMap[ly][lx];
-          const bgSprite = new PIXI.Sprite(textures[grassTile] || textures[TILE.GRASS]);
+          const bgSprite = this._spritePool.acquire();
+          bgSprite.texture = textures[grassTile] || textures[TILE.GRASS];
           bgSprite.x = px;
           bgSprite.y = py;
           groundGroup.addChild(bgSprite);
+          groundSprites.push(bgSprite);
 
-          const decorSprite = new PIXI.Sprite(textures[tile] || textures[TILE.GRASS]);
-          decorSprite.x = offsetX + lx;
-          decorSprite.y = offsetY + ly;
+          const decorSprite = this._spritePool.acquire();
+          decorSprite.texture = textures[tile] || textures[TILE.GRASS];
+          const worldX = offsetX + lx;
+          const worldY = offsetY + ly;
+          decorSprite.x = worldX;
+          decorSprite.y = worldY;
           decorSprite.width = 1;
           decorSprite.height = 1;
-          decorSprites.push({ sprite: decorSprite, worldY: offsetY + ly });
+          decorSprite.visible = false; // 初始不可见，等 _rebuildDecorLayer 设置
+          decorSprites.push({ sprite: decorSprite, worldX, worldY, tileType: tile });
           continue;
         }
 
         // 道路和山坡铺草地底图
         if (isRoadTile(tile) || isHillTile(tile)) {
           const grassTile = chunk.grassMap[ly][lx];
-          const bgSprite = new PIXI.Sprite(textures[grassTile] || textures[TILE.GRASS]);
+          const bgSprite = this._spritePool.acquire();
+          bgSprite.texture = textures[grassTile] || textures[TILE.GRASS];
           bgSprite.x = px;
           bgSprite.y = py;
           groundGroup.addChild(bgSprite);
+          groundSprites.push(bgSprite);
         }
 
         // 沙滩边缘瓦片：先铺水底图
         if (isBeachTile(tile)) {
-          const waterBg = new PIXI.Sprite(textures[TILE.WATER] || textures[TILE.GRASS]);
+          const waterBg = this._spritePool.acquire();
+          waterBg.texture = textures[TILE.WATER] || textures[TILE.GRASS];
           waterBg.x = px;
           waterBg.y = py;
           groundGroup.addChild(waterBg);
+          groundSprites.push(waterBg);
         }
 
-        const sprite = new PIXI.Sprite(
-          tile === TILE.GRASS
-            ? (textures[chunk.grassMap[ly][lx]] || textures[TILE.GRASS])
-            : (textures[tile] || textures[TILE.GRASS])
-        );
+        const sprite = this._spritePool.acquire();
+        sprite.texture = tile === TILE.GRASS
+          ? (textures[chunk.grassMap[ly][lx]] || textures[TILE.GRASS])
+          : (textures[tile] || textures[TILE.GRASS]);
         const rotation = TILE_ROTATION[tile] || 0;
         if (rotation !== 0) {
           sprite.anchor.set(0.5);
@@ -348,10 +402,13 @@ export class MapCanvasRenderer {
           sprite.y = py + tileH / 2;
           sprite.rotation = rotation;
         } else {
+          sprite.anchor.set(0, 0);
           sprite.x = px;
           sprite.y = py;
+          sprite.rotation = 0;
         }
         groundGroup.addChild(sprite);
+        groundSprites.push(sprite);
       }
     }
 
@@ -364,18 +421,37 @@ export class MapCanvasRenderer {
       resolution: 1,
     });
     this.app.renderer.render(groundGroup, { renderTexture });
-    groundGroup.destroy({ children: true });
+
+    // 归还地面精灵到对象池（烘焙后不再需要）
+    for (const sp of groundSprites) {
+      this._spritePool.release(sp);
+    }
+    groundGroup.destroy({ children: false }); // 不销毁子对象，它们已归还池
 
     // ── 第三步：创建区块容器 ──
-    const container = new PIXI.Container();
+    const container = this._containerPool.acquire();
     container.x = offsetX;
     container.y = offsetY;
 
-    const groundSprite = new PIXI.Sprite(renderTexture);
+    const groundSprite = this._spritePool.acquire();
+    groundSprite.texture = renderTexture;
     groundSprite.scale.set(1 / tileW, 1 / tileH);
+    groundSprite.anchor.set(0, 0);
     container.addChild(groundSprite);
     container._groundSprite = groundSprite;
     container._decorSprites = decorSprites;
+
+    // ── 将装饰物注册到空间索引并添加到装饰层容器 ──
+    if (this._decorContainer) {
+      for (const entry of decorSprites) {
+        this._decorIndex.insert(key, entry);
+        this._decorContainer.addChild(entry.sprite);
+      }
+    } else {
+      for (const entry of decorSprites) {
+        this._decorIndex.insert(key, entry);
+      }
+    }
 
     this._chunkContainers.set(key, container);
     this.mapContainer.addChild(container);
@@ -393,6 +469,11 @@ export class MapCanvasRenderer {
 
   /**
    * 重建装饰物层（视口裁剪 + Y排序）
+   * 优化策略：
+   * - 精灵只在首次创建时 addChild，不再每帧 removeChildren + addChild
+   * - 通过 sprite.visible 控制可见性，避免 PIXI 内部数组操作
+   * - 使用精确的瓦片坐标范围做裁剪，margin 考虑精灵可能超出1瓦片的尺寸
+   * - 排序后通过 setChildIndex 保证正确的绘制顺序
    * @private
    */
   _rebuildDecorLayer() {
@@ -400,35 +481,43 @@ export class MapCanvasRenderer {
 
     if (!this._decorContainer) {
       this._decorContainer = new PIXI.Container();
+      this._decorContainer.sortableChildren = true;
       this.mapContainer.addChild(this._decorContainer);
     }
 
-    this._decorContainer.removeChildren();
-
-    // 计算视口可见范围
+    // 计算视口可见范围（精确瓦片坐标 + 装饰物尺寸余量）
     const range = this._viewport.getVisibleTileRange();
-    const margin = 2;
+    const margin = 3; // 装饰物（如大树）可能向上/左延伸2-3瓦片
     const minX = range.x - margin;
     const maxX = range.endX + margin;
     const minY = range.y - margin;
     const maxY = range.endY + margin;
 
-    // 收集可见范围内的装饰物
-    const visibleDecors = [];
-    for (const [, container] of this._chunkContainers) {
-      if (!container._decorSprites) continue;
-      for (const decor of container._decorSprites) {
-        if (decor.worldY >= minY && decor.worldY <= maxY &&
-            decor.sprite.x >= minX && decor.sprite.x <= maxX) {
-          visibleDecors.push(decor);
-        }
+    // ── 使用空间索引查询可见装饰物 ──
+    // 先将所有已索引的装饰物标记为不可见
+    // （通过上一帧的可见集合快速操作）
+    if (this._lastVisibleDecors) {
+      for (const entry of this._lastVisibleDecors) {
+        entry.sprite.visible = false;
       }
     }
 
-    visibleDecors.sort((a, b) => a.worldY - b.worldY);
-    for (const { sprite } of visibleDecors) {
-      this._decorContainer.addChild(sprite);
+    const hideSmallDecor = this._lod.level >= 2;
+    const visibleDecors = this._decorIndex.queryRange(
+      minX, maxX, minY, maxY, { hideSmallDecor }
+    );
+
+    // 设置可见性并按 worldY 排序
+    for (const entry of visibleDecors) {
+      entry.sprite.visible = true;
     }
+    // PIXI sortableChildren = true 时会自动按 zIndex 排序
+    for (let i = 0; i < visibleDecors.length; i++) {
+      visibleDecors[i].sprite.zIndex = i;
+    }
+
+    // 缓存本帧可见集合，用于下一帧快速隐藏
+    this._lastVisibleDecors = visibleDecors;
 
     // 确保船容器在装饰层之上
     if (this._shipFleet) {
@@ -437,13 +526,32 @@ export class MapCanvasRenderer {
   }
 
   /**
-   * 加载素材纹理（委托给 AssetLoader）
+   * 加载素材纹理（支持渐进式加载）
+   * @param {object} [options]
+   * @param {boolean} [options.useAtlas=true] - 是否启用精灵图集合并
+   * @param {boolean} [options.progressive=true] - 是否启用渐进式加载
+   *   - true: critical 纹理就绪后立即返回，后续纹理通过回调替换
+   *   - false: 等待所有纹理加载完成
    * @returns {Promise<void>}
    */
-  async loadAssets() {
-    const result = await AssetLoader.load();
+  async loadAssets(options = {}) {
+    const { useAtlas = true, progressive = true } = options;
+
+    // 添加 preload 提示，加速 critical 纹理下载
+    this._preloadHints = AssetLoader.addPreloadHints();
+
+    const result = await AssetLoader.load({
+      useAtlas,
+      renderer: this.app?.renderer,
+      progressive,
+      onBatchReady: progressive ? (batchTextures, priority) => {
+        this._onTexturesBatchReady(batchTextures, priority);
+      } : null,
+    });
     this.textures = result.textures;
     this.tileSize = result.tileSize;
+    this._atlasTexture = result.atlasTexture;
+    this._atlasEnabled = result.atlasEnabled;
 
     // 更新子模块的 tileSize
     this._viewport.updateTileSize(this.tileSize);
@@ -451,10 +559,62 @@ export class MapCanvasRenderer {
       this._interaction.updateTileSize(this.tileSize);
     }
 
-    // 纹理加载完后初始化船队
+    // 初始化船队（渐进式模式下船纹理可能是回退色块，后续会替换）
     this._shipFleet = new ShipFleet(this.textures, this.tileSize, this._viewport.state);
-    this.mapContainer.addChild(this._shipFleet.container);
-    this._shipFleet.attachTicker(this.app.ticker);
+    if (this.mapContainer && this._shipFleet.container) {
+      this.mapContainer.addChild(this._shipFleet.container);
+    }
+    if (this.app?.ticker) {
+      this._shipFleet.attachTicker(this.app.ticker);
+    }
+  }
+
+  /**
+   * 渐进式加载批次回调：新纹理就绪时替换精灵纹理
+   * @private
+   * @param {Object<number, PIXI.Texture>} batchTextures - 新加载的纹理
+   * @param {string} priority - 批次优先级 ('high'|'normal'|'low'|'complete')
+   */
+  _onTexturesBatchReady(batchTextures, priority) {
+    // 更新纹理映射
+    for (const [key, texture] of Object.entries(batchTextures)) {
+      this.textures[parseInt(key)] = texture;
+    }
+
+    // 清除 preload 提示
+    if (this._preloadHints) {
+      AssetLoader.removePreloadHints(this._preloadHints);
+      this._preloadHints = null;
+    }
+
+    // 'complete' 表示所有纹理加载完毕且图集已重建
+    if (priority === 'complete') {
+      // 重新渲染所有区块以使用完整图集
+      this._rerenderAllChunks();
+      // 图集重建后纹理引用变化，更新船精灵纹理
+      if (this._shipFleet) {
+        this._shipFleet.updateTextures(this.textures);
+      }
+      console.info('[Renderer] Progressive loading complete, all textures replaced');
+      return;
+    }
+
+    // 对于高/普通/低优先级批次，需要重新渲染区块以替换纹理
+    // 但重新渲染所有区块代价较高，所以只在 normal 和 low 完成时全量刷新
+    // high 完成时只刷新可见区块（减少延迟感）
+    if (priority === 'high') {
+      // 高优先级：刷新当前可见区块
+      this._requestVisibleChunks();
+    } else if (priority === 'low') {
+      // 低优先级纹理（船/山坡）就绪，更新船精灵纹理
+      if (this._shipFleet) {
+        this._shipFleet.updateTextures(this.textures);
+      }
+      this._rebuildDecorLayer();
+    } else if (priority === 'normal') {
+      // 装饰物纹理就绪，重建装饰层
+      this._rebuildDecorLayer();
+    }
   }
 
   /**
@@ -521,7 +681,37 @@ export class MapCanvasRenderer {
   }
 
   /**
-   * 清空所有区块容器
+   * 重新渲染所有已缓存的区块容器（LOD 级别变化时调用）
+   * @private
+   */
+  _rerenderAllChunks() {
+    // 收集当前已加载的区块
+    const loadedChunks = [];
+    for (const [key, container] of this._chunkContainers) {
+      const [cx, cy] = key.split(',').map(Number);
+      const chunk = this.chunkManager.getChunkIfLoaded(cx, cy);
+      if (chunk) {
+        loadedChunks.push({ key, chunk });
+      }
+    }
+
+    // 移除旧容器并重新渲染
+    for (const { key } of loadedChunks) {
+      this._removeChunkContainer(key);
+    }
+    for (const { chunk } of loadedChunks) {
+      this._renderChunkContainer(chunk);
+      this._lastRenderedChunks.add(`${chunk.chunkX},${chunk.chunkY}`);
+    }
+
+    // 重建装饰层
+    if (this._lod.showDecorations) {
+      this._rebuildDecorLayer();
+    }
+  }
+
+  /**
+   * 清空所有区块容器（归还对象池）
    * @private
    */
   _clearAllContainers() {
@@ -530,17 +720,27 @@ export class MapCanvasRenderer {
       if (groundSprite && groundSprite.texture) {
         groundSprite.texture.destroy(true);
       }
+      if (groundSprite) {
+        this._spritePool.release(groundSprite);
+      }
+      // 归还装饰物精灵
+      if (container._decorSprites) {
+        for (const { sprite } of container._decorSprites) {
+          this._spritePool.release(sprite);
+        }
+      }
       this.mapContainer.removeChild(container);
-      container.destroy({ children: true });
+      this._containerPool.release(container);
     }
     this._chunkContainers.clear();
     this._lastRenderedChunks = new Set();
 
+    // 清空装饰层空间索引
+    this._decorIndex.clear();
+    this._lastVisibleDecors = null;
+
     if (this._decorContainer) {
-      const oldChildren = this._decorContainer.removeChildren();
-      for (const child of oldChildren) {
-        child.destroy();
-      }
+      this._decorContainer.removeChildren();
       this.mapContainer.removeChild(this._decorContainer);
       this._decorContainer.destroy();
       this._decorContainer = null;
@@ -594,25 +794,27 @@ export class MapCanvasRenderer {
   }
 
   /**
-   * 注册视口变化回调
+   * 注册视口变化回调（通过事件总线）
+   * @param {Function} cb
+   * @returns {Function} 取消订阅函数
    */
   setOnViewportChange(cb) {
-    this._onViewportChange = cb;
+    const unsub = gameEvents.on(GameEvent.VIEWPORT_INFO, cb);
+    this._eventUnsubs.push(unsub);
+    return unsub;
   }
 
   /**
-   * 注册瓦片悬停回调
+   * 注册瓦片悬停回调（通过事件总线）
+   * @param {Function} cb
+   * @returns {Function} 取消订阅函数
    */
   setOnTileHover(cb) {
-    this._onTileHover = cb;
-    if (this._interaction) {
-      this._interaction.setOnTileHover(cb ? (tileX, tileY) => {
-        if (this._onTileHover) {
-          const tile = this.chunkManager.getTile(tileX, tileY);
-          this._onTileHover(tileX, tileY, tile);
-        }
-      } : null);
-    }
+    const unsub = gameEvents.on(GameEvent.TILE_HOVER, (data) => {
+      cb(data.tileX, data.tileY, data.tileType);
+    });
+    this._eventUnsubs.push(unsub);
+    return unsub;
   }
 
   /**
@@ -632,11 +834,35 @@ export class MapCanvasRenderer {
       this._interaction = null;
     }
 
+    // 清理事件总线监听
+    for (const unsub of this._eventUnsubs) {
+      if (typeof unsub === 'function') unsub();
+    }
+    this._eventUnsubs = [];
+
     if (this._onResize) {
       window.removeEventListener('resize', this._onResize);
       this._onResize = null;
     }
     this._clearAllContainers();
+
+    // 清理 preload 提示
+    if (this._preloadHints) {
+      AssetLoader.removePreloadHints(this._preloadHints);
+      this._preloadHints = null;
+    }
+
+    // 释放图集纹理
+    if (this._atlasTexture) {
+      this._atlasTexture.destroy(true);
+      this._atlasTexture = null;
+    }
+    this._atlasEnabled = false;
+
+    // 销毁对象池
+    this._spritePool.destroy();
+    this._containerPool.destroy();
+
     if (this.app) {
       this.app.destroy(true, { children: true, texture: true });
       this.app = null;
