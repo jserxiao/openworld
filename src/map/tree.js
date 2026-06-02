@@ -2,19 +2,15 @@
  * 树木生成器
  * 在草地格子上随机生成树木（一棵树/两棵树/三棵树/大量树）
  * 支持聚集效应：少量概率在已有树附近密集生成
+ *
+ * 瓦片类型判断已抽离到 tileUtils.js，本模块不再重复定义
  */
 
 import { TILE, TREE_VARIANTS } from './constants';
+import { createSeededRandom, buildCumWeights, weightedRandom } from './utils';
 
-/**
- * 判断瓦片是否是树木类型
- * @param {number} tile
- * @returns {boolean}
- */
-export function isTreeTile(tile) {
-  return tile === TILE.TREE_1 || tile === TILE.TREE_2
-    || tile === TILE.TREE_3 || tile === TILE.TREE_MANY;
-}
+// 重新导出 tileUtils 中的判断函数，保持向后兼容
+export { isTreeTile } from './tileUtils';
 
 /**
  * 在地图上随机生成树木
@@ -26,9 +22,9 @@ export function isTreeTile(tile) {
  * @param {number} options.mapW - 地图列数
  * @param {number} options.mapH - 地图行数
  * @param {number} [options.count=60] - 生成树木的数量
- * @param {number} [options.seed] - 随机种子（可选，用于可重复生成）
- * @param {number} [options.clusterChance=0.25] - 聚集概率（0~1），已有树附近继续生成树的概率
- * @param {number} [options.clusterRadius=2] - 聚集半径，在已有树周围多少格范围内尝试聚集
+ * @param {number} [options.seed] - 随机种子
+ * @param {number} [options.clusterChance=0.25] - 聚集概率
+ * @param {number} [options.clusterRadius=2] - 聚集半径
  * @returns {{ trees: Array<{x: number, y: number, type: number}> }} 生成的树木列表
  */
 export function generateTrees(options) {
@@ -54,45 +50,28 @@ export function generateTrees(options) {
 
   if (grassCells.length === 0) return { trees: [] };
 
-  // 简单的伪随机数生成器（支持种子）
-  let rngState = seed ?? Date.now();
-  const random = () => {
-    rngState = (rngState * 1664525 + 1013904223) & 0xffffffff;
-    return (rngState >>> 0) / 0xffffffff;
-  };
+  const random = createSeededRandom(seed ?? Date.now());
 
-  // Fisher-Yates 洗牌，随机选取位置
+  // Fisher-Yates 洗牌
   const shuffled = grassCells.slice();
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
 
-  // 预计算树木类型权重累积表
-  const totalWeight = TREE_VARIANTS.reduce((s, v) => s + v.weight, 0);
-  const cumWeights = [];
-  let cum = 0;
-  for (const v of TREE_VARIANTS) {
-    cum += v.weight;
-    cumWeights.push({ tile: v.tile, cum });
-  }
+  const { cumWeights, totalWeight } = buildCumWeights(TREE_VARIANTS);
 
   const actualCount = Math.min(count, shuffled.length);
   const trees = [];
-  // 记录已放置树的位置，用于聚集判断
-  const treePositions = new Set();
-  // 记录已使用的格子，避免重复放置
   const usedPositions = new Set();
 
   for (let i = 0; i < actualCount; i++) {
     let x, y;
 
-    // 聚集效应：如果已有树，尝试在已有树附近生成
+    // 聚集效应
     if (trees.length > 0 && random() < clusterChance) {
-      // 随机选一个已有的树作为聚集中心
       const centerIndex = Math.floor(random() * trees.length);
       const center = trees[centerIndex];
-      // 在聚集半径内随机找一个草地格子
       const candidates = [];
       for (let dy = -clusterRadius; dy <= clusterRadius; dy++) {
         for (let dx = -clusterRadius; dx <= clusterRadius; dx++) {
@@ -114,9 +93,7 @@ export function generateTrees(options) {
       }
     }
 
-    // 如果没有触发聚集或聚集失败，使用随机位置
     if (x === undefined || y === undefined) {
-      // 从剩余随机位置中找一个未使用的
       let found = false;
       while (i < shuffled.length && !found) {
         const candidate = shuffled[i];
@@ -126,35 +103,19 @@ export function generateTrees(options) {
           y = candidate.y;
           found = true;
         }
-        // 如果当前位置已被使用，继续往后找
         if (!found) i++;
       }
-      if (!found) break; // 没有可用位置了
+      if (!found) break;
     }
 
     const key = `${x},${y}`;
     if (usedPositions.has(key)) continue;
 
     usedPositions.add(key);
-    // 按权重随机选择树木类型
-    const type = _weightedRandomTree(cumWeights, totalWeight);
+    const type = weightedRandom(cumWeights, totalWeight, random);
     map[y][x] = type;
     trees.push({ x, y, type });
   }
 
   return { trees };
-}
-
-/**
- * 加权随机选择树木类型
- * @param {Array<{tile: number, cum: number}>} cumWeights - 累积权重表
- * @param {number} totalWeight - 总权重
- * @returns {number} TILE 枚举值
- */
-function _weightedRandomTree(cumWeights, totalWeight) {
-  const r = Math.random() * totalWeight;
-  for (const { tile, cum } of cumWeights) {
-    if (r < cum) return tile;
-  }
-  return cumWeights[cumWeights.length - 1].tile;
 }

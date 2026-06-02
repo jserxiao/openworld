@@ -7,6 +7,7 @@ import { TILE, MAP_W, MAP_H, GRASS_VARIANTS, STONE_VARIANTS, ROCK_VARIANTS, BUSH
 import { generateRoad } from './road';
 import { generateTrees } from './tree';
 import { generateDecorations } from './decorations';
+import { createSeededRandom, buildCumWeights, weightedRandom } from './utils';
 
 export class MapData {
   constructor() {
@@ -33,20 +34,15 @@ export class MapData {
     this.grassMap = [];
 
     // 预计算权重累积表
-    const totalWeight = GRASS_VARIANTS.reduce((s, v) => s + v.weight, 0);
-    const cumWeights = [];
-    let cum = 0;
-    for (const v of GRASS_VARIANTS) {
-      cum += v.weight;
-      cumWeights.push({ tile: v.tile, cum });
-    }
+    const { cumWeights, totalWeight } = buildCumWeights(GRASS_VARIANTS);
+    const rng = createSeededRandom(Date.now());
 
     for (let y = 0; y < mapH; y++) {
       this.map[y] = new Uint8Array(mapW);
       this.map[y].fill(TILE.GRASS);
       this.grassMap[y] = new Uint8Array(mapW);
       for (let x = 0; x < mapW; x++) {
-        this.grassMap[y][x] = _weightedRandom(cumWeights, totalWeight);
+        this.grassMap[y][x] = weightedRandom(cumWeights, totalWeight, rng);
       }
     }
     return this;
@@ -66,7 +62,7 @@ export class MapData {
       this.map.push(new Uint8Array(mapW));
       this.map[this.map.length - 1].fill(TILE.GRASS);
       this.grassMap.push(new Uint8Array(mapW));
-      this.grassMap[this.grassMap.length - 1].fill(TILE.GRASS_1);
+      this.grassMap[this.map.length - 1].fill(TILE.GRASS_1);
     }
     // 扩展列
     for (let y = 0; y < this.map.length; y++) {
@@ -198,18 +194,4 @@ export class MapData {
   getSnapshot() {
     return this.map.map(row => new Uint8Array(row));
   }
-}
-
-/**
- * 加权随机选择
- * @param {Array<{tile: number, cum: number}>} cumWeights - 累积权重表
- * @param {number} totalWeight - 总权重
- * @returns {number} TILE 枚举值
- */
-function _weightedRandom(cumWeights, totalWeight) {
-  const r = Math.random() * totalWeight;
-  for (const { tile, cum } of cumWeights) {
-    if (r < cum) return tile;
-  }
-  return cumWeights[cumWeights.length - 1].tile;
 }

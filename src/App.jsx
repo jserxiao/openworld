@@ -1,22 +1,25 @@
-import { useState, useRef, useCallback } from 'react';
+import { useMemo, useRef, useState, useCallback } from 'react';
 import MapCanvas from './components/MapCanvas';
+
+// 森林默认配置（模块级常量，避免每次渲染重新创建对象）
+const DEFAULT_MAP_OPTIONS = {
+  forest: {
+    frequency: 5.0,      // 噪声频率：scale=40/freq=8瓦片周期（约1/4屏）
+    octaves: 3,          // 噪声八度
+    threshold: 0.68,     // 森林阈值：越高森林面积越小（0.5~0.95之间调整）
+    densityRange: 0.15,  // 密度过渡范围
+    edgeChance: 0.7,     // 边缘放树概率
+    coreChance: 1.0,     // 核心放树概率
+  },
+};
 
 export default function App() {
   const mapRef = useRef(null);
   const [viewportInfo, setViewportInfo] = useState(null);
   const [hoveredTile, setHoveredTile] = useState(null);
 
-  // 地图生成配置
-  const mapOptions = {
-    forest: {
-      frequency: 5.0,      // 噪声频率：scale=40/freq=8瓦片周期（约1/4屏）
-      octaves: 3,          // 噪声八度
-      threshold: 0.68,     // 森林阈值：越高森林面积越小（0.5~0.95之间调整）
-      densityRange: 0.15,  // 密度过渡范围
-      edgeChance: 0.7,     // 边缘放树概率
-      coreChance: 1.0,     // 核心放树概率
-    },
-  };
+  // 使用 useMemo 避免 mapOptions 每次渲染重新创建
+  const mapOptions = useMemo(() => DEFAULT_MAP_OPTIONS, []);
 
   const handleViewportChange = useCallback((info) => {
     setViewportInfo(info);
@@ -36,16 +39,8 @@ export default function App() {
       />
 
       {/* HUD 信息面板 */}
-      <div style={{
-        position: 'fixed', top: 12, right: 12, zIndex: 100,
-        background: 'rgba(0,0,0,0.75)', borderRadius: 8,
-        padding: '10px 16px', color: '#fff', fontSize: 13,
-        fontFamily: 'monospace', lineHeight: 1.8,
-        pointerEvents: 'none', userSelect: 'none',
-      }}>
-        <div style={{ fontSize: 15, fontWeight: 'bold', marginBottom: 4, color: '#4a9eff' }}>
-          🌍 无限世界
-        </div>
+      <div className="hud-panel">
+        <div className="hud-title">🌍 无限世界</div>
         {viewportInfo && (
           <>
             <div>缩放: {viewportInfo.zoom.toFixed(2)}x</div>
@@ -54,19 +49,14 @@ export default function App() {
           </>
         )}
         {hoveredTile && (
-          <div style={{ color: '#aaa', marginTop: 4 }}>
+          <div className="hud-tile-info">
             瓦片: ({hoveredTile.tileX}, {hoveredTile.tileY}) 类型: {hoveredTile.tileType}
           </div>
         )}
       </div>
 
       {/* 操作提示 */}
-      <div style={{
-        position: 'fixed', bottom: 12, left: '50%', transform: 'translateX(-50%)',
-        zIndex: 100, background: 'rgba(0,0,0,0.6)', borderRadius: 20,
-        padding: '6px 20px', color: '#aaa', fontSize: 12,
-        pointerEvents: 'none', userSelect: 'none',
-      }}>
+      <div className="hud-hint">
         🖱️ 拖拽移动 | 🔄 滚轮缩放
       </div>
     </>

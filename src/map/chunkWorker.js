@@ -1,9 +1,9 @@
 /**
  * 区块生成 Web Worker
- * 
+ *
  * 在后台线程中执行区块生成逻辑，避免阻塞主线程
- * 所有生成逻辑自包含，通过 postMessage 与主线程通信
- * 
+ * 通过 import 复用主线程的公共模块，消除代码重复
+ *
  * 消息协议：
  * - 主线程 → Worker: { type: 'generate', chunkX, chunkY }
  * - 主线程 → Worker: { type: 'generateBatch', requests: [{chunkX, chunkY}, ...] }
@@ -18,68 +18,8 @@ import {
   FOREST_CONFIG,
 } from './constants';
 
-// ── 噪声 ──
-function createNoise(seed) {
-  function hash(x, y) {
-    const n = Math.sin(x * 12.9898 + y * 78.233 + seed) * 43758.5453;
-    return n - Math.floor(n);
-  }
-  function smooth(x, y, scale) {
-    const sx = x / scale, sy = y / scale;
-    const ix = Math.floor(sx), iy = Math.floor(sy);
-    const fx = sx - ix, fy = sy - iy;
-    const a = hash(ix, iy), b = hash(ix + 1, iy);
-    const c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
-    const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
-    return a * (1 - ux) * (1 - uy) + b * ux * (1 - uy) + c * (1 - ux) * uy + d * ux * uy;
-  }
-  function fbm(x, y, octaves = 5, lacunarity = 2, persistence = 0.5) {
-    let val = 0, amp = 1, freq = 1, ampSum = 0;
-    for (let i = 0; i < octaves; i++) {
-      val += smooth(x * freq, y * freq, 40) * amp;
-      ampSum += amp;
-      amp *= persistence;
-      freq *= lacunarity;
-    }
-    return val / ampSum;
-  }
-  return { hash, smooth, fbm };
-}
-
-// ── 确定性随机 ──
-function createSeededRandom(seed) {
-  let s = seed;
-  return () => {
-    s = (s * 1664525 + 1013904223) & 0xffffffff;
-    return (s >>> 0) / 0xffffffff;
-  };
-}
-
-function weightedRandom(cumWeights, totalWeight, random) {
-  const r = random() * totalWeight;
-  for (const { tile, cum } of cumWeights) {
-    if (r < cum) return tile;
-  }
-  return cumWeights[cumWeights.length - 1].tile;
-}
-
-function buildCumWeights(variants) {
-  const totalWeight = variants.reduce((s, v) => s + v.weight, 0);
-  const cumWeights = [];
-  let cum = 0;
-  for (const v of variants) { cum += v.weight; cumWeights.push({ tile: v.tile, cum }); }
-  return { cumWeights, totalWeight };
-}
-
-// ── 瓦片类型判断 ──
-function isRoadTile(tile) {
-  return (tile >= TILE.ROAD_H && tile <= TILE.ROAD_CROSS)
-    || (tile >= TILE.STONE_ROAD_H && tile <= TILE.STONE_ROAD_CROSS)
-    || (tile >= TILE.ROAD_END_UP && tile <= TILE.ROAD_END_LEFT);
-}
-function isHillTile(tile) { return tile >= TILE.HILL_TL && tile <= TILE.HILL_BR; }
-function isWaterAreaTile(tile) { return tile === TILE.WATER || (tile >= TILE.CORNER_TL && tile <= TILE.EDGE_L); }
-function isTreeTile(tile) { return tile === TILE.TREE_1 || tile === TILE.TREE_2 || tile === TILE.TREE_3 || tile === TILE.TREE_MANY; }
+import { createNoise, createSeededRandom, buildCumWeights, weightedRandom } from './utils';
+import { isRoadTile, isHillTile, isWaterAreaTile, isTreeTile } from './tileUtils';
 
 // ── 噪声实例 ──
 const roadNoise = createNoise(WORLD_SEED);

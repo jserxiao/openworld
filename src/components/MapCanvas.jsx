@@ -7,6 +7,14 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
   const initRef = useRef(false);
   const [loading, setLoading] = useState(true);
 
+  // 使用 useRef 保存回调引用，避免闭包过时问题
+  const onViewportChangeRef = useRef(onViewportChange);
+  const onTileHoverRef = useRef(onTileHover);
+
+  // 每次渲染更新 ref
+  onViewportChangeRef.current = onViewportChange;
+  onTileHoverRef.current = onTileHover;
+
   // 重置视图
   const resetView = useCallback(() => {
     const renderer = rendererRef.current;
@@ -45,13 +53,13 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
       // 2. 加载素材
       await renderer.loadAssets();
 
-      // 3. 注册回调
-      if (onViewportChange) {
-        renderer.setOnViewportChange(onViewportChange);
-      }
-      if (onTileHover) {
-        renderer.setOnTileHover(onTileHover);
-      }
+      // 3. 注册回调（使用 ref.current 确保始终获取最新回调）
+      renderer.setOnViewportChange((info) => {
+        if (onViewportChangeRef.current) onViewportChangeRef.current(info);
+      });
+      renderer.setOnTileHover((tileX, tileY, tileType) => {
+        if (onTileHoverRef.current) onTileHoverRef.current(tileX, tileY, tileType);
+      });
 
       // 4. 首次渲染（异步加载区块，Worker 生成完后自动渲染）
       // 将初始视口定位到岸线附近，让草地/沙滩/水域同时可见
@@ -66,9 +74,9 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
       const tickerFn = () => {
         frameCount++;
         if (frameCount % 10 !== 0) return;
-        if (onViewportChange) {
+        if (onViewportChangeRef.current) {
           const info = renderer.getViewportInfo();
-          if (info) onViewportChange(info);
+          if (info) onViewportChangeRef.current(info);
         }
       };
       if (ticker) ticker.add(tickerFn);
@@ -86,28 +94,17 @@ const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover,
       renderer.destroy();
       initRef.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mapOptions]);
 
   return (
     <>
       {loading && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-          background: 'rgba(0,0,0,0.9)', zIndex: 999,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexDirection: 'column', color: '#fff', fontSize: 18,
-        }}>
-          <div style={{
-            width: 48, height: 48, border: '4px solid #333',
-            borderTop: '4px solid #4a9eff', borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite', marginBottom: 16,
-          }} />
-          <div>正在生成无限世界...</div>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div className="loading-overlay">
+          <div className="loading-spinner" />
+          <div className="loading-text">正在生成无限世界...</div>
         </div>
       )}
-      <div ref={containerRef} style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 0 }} />
+      <div ref={containerRef} className="map-container" />
     </>
   );
 });

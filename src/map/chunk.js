@@ -6,6 +6,9 @@
  * - 区块生成逻辑在 Web Worker 中执行，避免阻塞主线程
  * - 主线程通过 ChunkManager 管理区块缓存和异步加载
  * - LRU缓存管理区块数据，远离视口的区块会被回收
+ *
+ * 性能优化：使用 Map 的插入顺序特性实现 O(1) LRU，
+ * 替代原来数组 + indexOf/splice 的 O(n) 实现
  */
 
 import { CHUNK_SIZE, MAX_CACHED_CHUNKS } from './constants';
@@ -25,8 +28,6 @@ export class Chunk {
     this.map = [];
     /** @type {Uint8Array[]} 草地变体数据 [localY][localX] */
     this.grassMap = [];
-    /** 最后访问时间戳（用于LRU） */
-    this.lastAccess = 0;
   }
 }
 
@@ -38,10 +39,13 @@ export class ChunkManager {
    * @param {object} [options] - 可选配置
    */
   constructor(options = {}) {
-    /** @type {Map<string, Chunk>} 区块缓存 key=`${chunkX},${chunkY}` */
+    /**
+     * 区块缓存 key=`${chunkX},${chunkY}`
+     * Map 的插入顺序天然维护 LRU 顺序：delete + set 将键移到末尾
+     * 迭代时从最旧的（最先插入的）开始
+     * @type {Map<string, Chunk>}
+     */
     this.chunks = new Map();
-    /** LRU 访问顺序（最新在末尾） */
-    this.accessOrder = [];
 
     // ── Worker 相关 ──
     /** @type {Worker|null} */
@@ -102,7 +106,6 @@ export class ChunkManager {
         chunk.map[i] = new Uint8Array(mapBuffers[i]);
         chunk.grassMap[i] = new Uint8Array(grassBuffers[i]);
       }
-      chunk.lastAccess = Date.now();
 
       this._addChunk(key, chunk);
       this._inflight.delete(key);
@@ -128,7 +131,6 @@ export class ChunkManager {
           chunk.map[i] = new Uint8Array(mapBuffers[i]);
           chunk.grassMap[i] = new Uint8Array(grassBuffers[i]);
         }
-        chunk.lastAccess = Date.now();
 
         this._addChunk(key, chunk);
         this._inflight.delete(key);
@@ -155,6 +157,19 @@ export class ChunkManager {
   }
 
   /**
+   * 将区块标记为最近访问（移到 Map 末尾）
+   * O(1) 操作：delete + set
+   * @private
+   */
+  _touch(key) {
+    const chunk = this.chunks.get(key);
+    if (chunk !== undefined) {
+      this.chunks.delete(key);
+      this.chunks.set(key, chunk);
+    }
+  }
+
+  /**
    * 获取指定区块（同步，可能返回 null 如果区块尚未生成）
    * @param {number} chunkX
    * @param {number} chunkY
@@ -163,15 +178,12 @@ export class ChunkManager {
   getChunkIfLoaded(chunkX, chunkY) {
     const key = this._key(chunkX, chunkY);
     const chunk = this.chunks.get(key);
-    if (chunk) {
-      chunk.lastAccess = Date.now();
-      const idx = this.accessOrder.indexOf(key);
-      if (idx !== -1) {
-        this.accessOrder.splice(idx, 1);
-        this.accessOrder.push(key);
-      }
+    if (chunk !== undefined) {
+      // O(1) LRU 更新
+      this._touch(key);
+      return chunk;
     }
-    return chunk || null;
+    return null;
   }
 
   /**
@@ -183,13 +195,8 @@ export class ChunkManager {
   getChunkAsync(chunkX, chunkY) {
     const key = this._key(chunkX, chunkY);
     const cached = this.chunks.get(key);
-    if (cached) {
-      cached.lastAccess = Date.now();
-      const idx = this.accessOrder.indexOf(key);
-      if (idx !== -1) {
-        this.accessOrder.splice(idx, 1);
-        this.accessOrder.push(key);
-      }
+    if (cached !== undefined) {
+      this._touch(key);
       return Promise.resolve(cached);
     }
 
@@ -244,8 +251,8 @@ export class ChunkManager {
     for (const { chunkX, chunkY } of requests) {
       const key = this._key(chunkX, chunkY);
       const cached = this.chunks.get(key);
-      if (cached) {
-        cached.lastAccess = Date.now();
+      if (cached !== undefined) {
+        this._touch(key);
         results.push(cached);
       } else if (this._inflight.has(key)) {
         // 已在请求中，等待结果
@@ -390,22 +397,25 @@ export class ChunkManager {
 
   /**
    * 添加区块到缓存，并执行LRU淘汰
+   * 利用 Map 的插入顺序：最先插入的即最久未访问的
    */
   _addChunk(key, chunk) {
-    // 如果已存在（可能是重复请求），更新数据
+    // 如果已存在（可能是重复请求），删除后重新插入（移到末尾）
     if (this.chunks.has(key)) {
+      this.chunks.delete(key);
       this.chunks.set(key, chunk);
       return;
     }
 
     this.chunks.set(key, chunk);
-    this.accessOrder.push(key);
 
-    // LRU淘汰
+    // LRU淘汰：Map 迭代器从最旧的（最先插入的）开始
     while (this.chunks.size > MAX_CACHED_CHUNKS) {
-      const oldestKey = this.accessOrder.shift();
-      if (oldestKey && this.chunks.has(oldestKey)) {
+      const oldestKey = this.chunks.keys().next().value;
+      if (oldestKey !== undefined) {
         this.chunks.delete(oldestKey);
+      } else {
+        break;
       }
     }
   }
@@ -428,7 +438,6 @@ export class ChunkManager {
    */
   clearCache() {
     this.chunks.clear();
-    this.accessOrder = [];
   }
 
   /**

@@ -2,84 +2,24 @@
  * 装饰物生成器
  * 在草地格子上随机生成石块、岩块、草丛、浆果丛等装饰物
  * 支持聚集效应
+ *
+ * 瓦片类型判断已抽离到 tileUtils.js，本模块不再重复定义
  */
 
 import { TILE } from './constants';
+import { createSeededRandom, buildCumWeights, weightedRandom } from './utils';
 
-/**
- * 判断瓦片是否是装饰物类型（石块、岩块、草丛、浆果丛）
- * @param {number} tile
- * @returns {boolean}
- */
-export function isDecorationTile(tile) {
-  return (tile >= TILE.STONE_SMALL && tile <= TILE.STONE_3)
-    || (tile >= TILE.ROCK_SMALL && tile <= TILE.ROCK_3)
-    || tile === TILE.BUSH
-    || tile === TILE.BERRY;
-}
-
-/**
- * 判断瓦片是否是山坡类型
- * @param {number} tile
- * @returns {boolean}
- */
-export function isHillTile(tile) {
-  return tile >= TILE.HILL_TL && tile <= TILE.HILL_BR;
-}
-
-/**
- * 判断瓦片是否是石块类型
- * @param {number} tile
- * @returns {boolean}
- */
-export function isStoneTile(tile) {
-  return tile >= TILE.STONE_SMALL && tile <= TILE.STONE_3;
-}
-
-/**
- * 判断瓦片是否是岩块类型
- * @param {number} tile
- * @returns {boolean}
- */
-export function isRockTile(tile) {
-  return tile >= TILE.ROCK_SMALL && tile <= TILE.ROCK_3;
-}
-
-/**
- * 判断瓦片是否是草丛/浆果丛类型
- * @param {number} tile
- * @returns {boolean}
- */
-export function isBushTile(tile) {
-  return tile === TILE.BUSH || tile === TILE.BERRY;
-}
-
-/**
- * 判断瓦片是否是深水类型
- * @param {number} tile
- * @returns {boolean}
- */
-export function isWaterTile(tile) {
-  return tile === TILE.WATER;
-}
-
-/**
- * 判断瓦片是否是沙滩边缘类型
- * @param {number} tile
- * @returns {boolean}
- */
-export function isBeachTile(tile) {
-  return tile >= TILE.CORNER_TL && tile <= TILE.EDGE_L;
-}
-
-/**
- * 判断瓦片是否属于水域区域（深水或沙滩）
- * @param {number} tile
- * @returns {boolean}
- */
-export function isWaterAreaTile(tile) {
-  return tile === TILE.WATER || (tile >= TILE.CORNER_TL && tile <= TILE.EDGE_L);
-}
+// 重新导出 tileUtils 中的判断函数，保持向后兼容
+export {
+  isDecorationTile,
+  isStoneTile,
+  isRockTile,
+  isBushTile,
+  isHillTile,
+  isBeachTile,
+  isWaterTile,
+  isWaterAreaTile,
+} from './tileUtils';
 
 /**
  * 在地图上随机生成装饰物
@@ -123,12 +63,7 @@ export function generateDecorations(options) {
 
   if (grassCells.length === 0) return { decorations: [] };
 
-  // 简单的伪随机数生成器（支持种子）
-  let rngState = seed ?? Date.now();
-  const random = () => {
-    rngState = (rngState * 1664525 + 1013904223) & 0xffffffff;
-    return (rngState >>> 0) / 0xffffffff;
-  };
+  const random = createSeededRandom(seed ?? Date.now());
 
   // Fisher-Yates 洗牌，随机选取位置
   const shuffled = grassCells.slice();
@@ -138,13 +73,7 @@ export function generateDecorations(options) {
   }
 
   // 预计算变体权重累积表
-  const totalWeight = variants.reduce((s, v) => s + v.weight, 0);
-  const cumWeights = [];
-  let cum = 0;
-  for (const v of variants) {
-    cum += v.weight;
-    cumWeights.push({ tile: v.tile, cum });
-  }
+  const { cumWeights, totalWeight } = buildCumWeights(variants);
 
   const actualCount = Math.min(count, shuffled.length);
   const decorations = [];
@@ -198,24 +127,10 @@ export function generateDecorations(options) {
     if (usedPositions.has(key)) continue;
 
     usedPositions.add(key);
-    const type = _weightedRandom(cumWeights, totalWeight);
+    const type = weightedRandom(cumWeights, totalWeight, random);
     map[y][x] = type;
     decorations.push({ x, y, type });
   }
 
   return { decorations };
-}
-
-/**
- * 加权随机选择
- * @param {Array<{tile: number, cum: number}>} cumWeights - 累积权重表
- * @param {number} totalWeight - 总权重
- * @returns {number} TILE 枚举值
- */
-function _weightedRandom(cumWeights, totalWeight) {
-  const r = Math.random() * totalWeight;
-  for (const { tile, cum } of cumWeights) {
-    if (r < cum) return tile;
-  }
-  return cumWeights[cumWeights.length - 1].tile;
 }

@@ -1,26 +1,48 @@
 // 常量
 export { TILE, TILE_NAMES, TILE_COLORS, TILE_ASSETS, TILE_ROTATION, DIR, DX, DY, MAP_W, MAP_H, GRASS_VARIANTS, TREE_VARIANTS, STONE_VARIANTS, ROCK_VARIANTS, BUSH_VARIANTS, FOREST_VARIANTS, CHUNK_SIZE, MAX_CACHED_CHUNKS, CHUNK_PRELOAD_MARGIN, WORLD_SEED, FOREST_CONFIG } from './constants';
 
-// 道路
-export { isRoadTile, isStoneRoadTile, generateRoad } from './road';
+// 公共工具
+export { createNoise, createSeededRandom, buildCumWeights, weightedRandom } from './utils';
 
-// 树木
-export { isTreeTile, generateTrees } from './tree';
+// 瓦片类型判断（统一入口）
+export {
+  isRoadTile, isStoneRoadTile,
+  isWaterTile, isBeachTile, isWaterAreaTile,
+  isHillTile,
+  isTreeTile,
+  isDecorationTile, isStoneTile, isRockTile, isBushTile,
+  needsGrassBackground, isDecorSprite,
+} from './tileUtils';
 
-// 装饰物（石块、岩块、草丛、浆果丛、山坡）
-export { isDecorationTile, isStoneTile, isRockTile, isBushTile, isHillTile, generateDecorations } from './decorations';
+// 道路（兼容旧导入路径）
+export { generateRoad } from './road';
 
-// 噪声
-export { createNoise } from './noise';
+// 树木（兼容旧导入路径）
+export { generateTrees } from './tree';
 
-// 池塘
-export { generatePond, generateMap } from './pond';
+// 装饰物（兼容旧导入路径）
+export { generateDecorations } from './decorations';
+
+// 噪声已合并到 utils.js，createNoise 在上方已导出
+// noise.js 保留为空桥接文件，不再重复导出以避免 Duplicate export
 
 // 数据层
 export { MapData } from './mapData';
 
 // 区块系统（无限地图）
 export { Chunk, ChunkManager } from './chunk';
+
+// 视口管理
+export { Viewport } from './viewport';
+
+// 交互控制
+export { InteractionController } from './interaction';
+
+// 素材加载
+export { AssetLoader } from './assetLoader';
+
+// 船精灵
+export { Ship, ShipFleet } from './ship';
 
 // 渲染层
 export { MapCanvasRenderer } from './renderer';
