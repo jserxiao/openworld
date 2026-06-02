@@ -3,15 +3,17 @@
  * 负责地图瓦片数据的生成和管理，不涉及任何渲染逻辑
  */
 
-import { TILE, MAP_W, MAP_H } from './constants';
-import { generatePond } from './pond';
+import { TILE, MAP_W, MAP_H, GRASS_VARIANTS, STONE_VARIANTS, ROCK_VARIANTS, BUSH_VARIANTS } from './constants';
 import { generateRoad } from './road';
 import { generateTrees } from './tree';
+import { generateDecorations } from './decorations';
 
 export class MapData {
   constructor() {
     /** @type {Uint8Array[]} 瓦片数据 map[y][x] */
     this.map = [];
+    /** @type {Uint8Array[]} 草地变体数据 grassMap[y][x]，记录每个草地格子使用的变体TILE值 */
+    this.grassMap = [];
     /** @type {number} 地图列数 */
     this.mapW = MAP_W;
     /** @type {number} 地图行数 */
@@ -20,6 +22,7 @@ export class MapData {
 
   /**
    * 初始化空地图（全草地）
+   * 同时生成草地变体分布（草1、草2 为主，草金、草石 少量）
    * @param {number} [mapW] 列数
    * @param {number} [mapH] 行数
    */
@@ -27,9 +30,24 @@ export class MapData {
     this.mapW = mapW;
     this.mapH = mapH;
     this.map = [];
+    this.grassMap = [];
+
+    // 预计算权重累积表
+    const totalWeight = GRASS_VARIANTS.reduce((s, v) => s + v.weight, 0);
+    const cumWeights = [];
+    let cum = 0;
+    for (const v of GRASS_VARIANTS) {
+      cum += v.weight;
+      cumWeights.push({ tile: v.tile, cum });
+    }
+
     for (let y = 0; y < mapH; y++) {
       this.map[y] = new Uint8Array(mapW);
       this.map[y].fill(TILE.GRASS);
+      this.grassMap[y] = new Uint8Array(mapW);
+      for (let x = 0; x < mapW; x++) {
+        this.grassMap[y][x] = _weightedRandom(cumWeights, totalWeight);
+      }
     }
     return this;
   }
@@ -47,6 +65,8 @@ export class MapData {
     while (this.map.length < mapH) {
       this.map.push(new Uint8Array(mapW));
       this.map[this.map.length - 1].fill(TILE.GRASS);
+      this.grassMap.push(new Uint8Array(mapW));
+      this.grassMap[this.grassMap.length - 1].fill(TILE.GRASS_1);
     }
     // 扩展列
     for (let y = 0; y < this.map.length; y++) {
@@ -55,31 +75,13 @@ export class MapData {
         newRow.fill(TILE.GRASS);
         newRow.set(this.map[y]);
         this.map[y] = newRow;
+        const newGrass = new Uint8Array(mapW);
+        newGrass.fill(TILE.GRASS_1);
+        newGrass.set(this.grassMap[y]);
+        this.grassMap[y] = newGrass;
       }
     }
     return this;
-  }
-
-  /**
-   * 生成池塘
-   * @param {object} options
-   * @param {number} options.pondX - 池塘左上角列坐标
-   * @param {number} options.pondY - 池塘左上角行坐标
-   * @param {number} options.pondW - 池塘宽度（瓦片数）
-   * @param {number} options.pondH - 池塘高度（瓦片数）
-   * @returns {{ pondLeft: number, pondTop: number, pondRight: number, pondBottom: number }}
-   */
-  addPond(options) {
-    const result = generatePond(options);
-    this.map = result.map;
-    // 扩展到固定画布大小
-    this.resize(this.mapW, this.mapH);
-    return {
-      pondLeft: result.pondLeft,
-      pondTop: result.pondTop,
-      pondRight: result.pondRight,
-      pondBottom: result.pondBottom,
-    };
   }
 
   /**
@@ -119,6 +121,66 @@ export class MapData {
   }
 
   /**
+   * 随机生成装饰物（石块、岩块、草丛、浆果丛，只会放在草地上）
+   * @param {object} options
+   * @param {Array<{tile: number, weight: number}>} [options.variants] - 自定义变体权重表
+   * @param {number} [options.count=20] - 生成装饰物数量
+   * @param {number} [options.seed] - 随机种子
+   * @param {number} [options.clusterChance=0.2] - 聚集概率
+   * @param {number} [options.clusterRadius=2] - 聚集半径
+   * @returns {{ decorations: Array<{x: number, y: number, type: number}> }}
+   */
+  addDecorations(options = {}) {
+    const result = generateDecorations({
+      map: this.map,
+      mapW: this.mapW,
+      mapH: this.mapH,
+      ...options,
+    });
+    this.decorations = result.decorations;
+    return result;
+  }
+
+  /**
+   * 快捷方法：生成石块
+   * @param {object} [options]
+   * @returns {{ decorations: Array<{x: number, y: number, type: number}> }}
+   */
+  addStones(options = {}) {
+    return this.addDecorations({
+      variants: STONE_VARIANTS,
+      count: options.count ?? 15,
+      ...options,
+    });
+  }
+
+  /**
+   * 快捷方法：生成岩块
+   * @param {object} [options]
+   * @returns {{ decorations: Array<{x: number, y: number, type: number}> }}
+   */
+  addRocks(options = {}) {
+    return this.addDecorations({
+      variants: ROCK_VARIANTS,
+      count: options.count ?? 15,
+      ...options,
+    });
+  }
+
+  /**
+   * 快捷方法：生成草丛和浆果丛
+   * @param {object} [options]
+   * @returns {{ decorations: Array<{x: number, y: number, type: number}> }}
+   */
+  addBushes(options = {}) {
+    return this.addDecorations({
+      variants: BUSH_VARIANTS,
+      count: options.count ?? 20,
+      ...options,
+    });
+  }
+
+  /**
    * 获取指定位置的瓦片类型
    * @param {number} x 列
    * @param {number} y 行
@@ -136,4 +198,18 @@ export class MapData {
   getSnapshot() {
     return this.map.map(row => new Uint8Array(row));
   }
+}
+
+/**
+ * 加权随机选择
+ * @param {Array<{tile: number, cum: number}>} cumWeights - 累积权重表
+ * @param {number} totalWeight - 总权重
+ * @returns {number} TILE 枚举值
+ */
+function _weightedRandom(cumWeights, totalWeight) {
+  const r = Math.random() * totalWeight;
+  for (const { tile, cum } of cumWeights) {
+    if (r < cum) return tile;
+  }
+  return cumWeights[cumWeights.length - 1].tile;
 }

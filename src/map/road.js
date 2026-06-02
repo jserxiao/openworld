@@ -6,11 +6,12 @@
 import { TILE, DX, DY } from './constants';
 
 /**
- * 判断一个瓦片类型是否是道路（包括普通路和石板路）
+ * 判断一个瓦片类型是否是道路（包括普通路和石板路、路尽头）
  */
 export function isRoadTile(tile) {
   return (tile >= TILE.ROAD_H && tile <= TILE.ROAD_CROSS)
-    || (tile >= TILE.STONE_ROAD_H && tile <= TILE.STONE_ROAD_CROSS);
+    || (tile >= TILE.STONE_ROAD_H && tile <= TILE.STONE_ROAD_CROSS)
+    || (tile >= TILE.ROAD_END_UP && tile <= TILE.ROAD_END_LEFT);
 }
 
 /**
@@ -65,9 +66,16 @@ function resolveRoadTile(dirs, type = 'road', lastDir = null) {
   }
 
   if (count === 1) {
-    // 死胡同，按唯一方向给一个直路
-    if (up || down) return type === 'stone' ? TILE.STONE_ROAD_V : TILE.ROAD_V;
-    return type === 'stone' ? TILE.STONE_ROAD_H : TILE.ROAD_H;
+    // 路尽头：只有一个方向连通，使用路尽头贴图
+    if (type === 'stone') {
+      // 石板路暂无尽头贴图，仍用直路
+      if (up || down) return TILE.STONE_ROAD_V;
+      return TILE.STONE_ROAD_H;
+    }
+    if (up) return TILE.ROAD_END_UP;
+    if (right) return TILE.ROAD_END_RIGHT;
+    if (down) return TILE.ROAD_END_DOWN;
+    if (left) return TILE.ROAD_END_LEFT;
   }
 
   return type === 'stone' ? TILE.STONE_ROAD_H : TILE.ROAD_H;

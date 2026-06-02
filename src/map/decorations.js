@@ -1,48 +1,90 @@
 /**
- * 树木生成器
- * 在草地格子上随机生成树木（一棵树/两棵树/三棵树/大量树）
- * 支持聚集效应：少量概率在已有树附近密集生成
+ * 装饰物生成器
+ * 在草地格子上随机生成石块、岩块、草丛、浆果丛等装饰物
+ * 支持聚集效应
  */
 
-import { TILE, TREE_VARIANTS } from './constants';
+import { TILE } from './constants';
 
 /**
- * 判断瓦片是否是树木类型
+ * 判断瓦片是否是装饰物类型（石块、岩块、草丛、浆果丛）
  * @param {number} tile
  * @returns {boolean}
  */
-export function isTreeTile(tile) {
-  return tile === TILE.TREE_1 || tile === TILE.TREE_2
-    || tile === TILE.TREE_3 || tile === TILE.TREE_MANY;
+export function isDecorationTile(tile) {
+  return (tile >= TILE.STONE_SMALL && tile <= TILE.STONE_3)
+    || (tile >= TILE.ROCK_SMALL && tile <= TILE.ROCK_3)
+    || tile === TILE.BUSH
+    || tile === TILE.BERRY;
 }
 
 /**
- * 在地图上随机生成树木
- * 只会在草地格子上放置树木，不覆盖池塘、道路等已有元素
- * 树木类型按权重随机选择（一棵树最多，大量树最少）
+ * 判断瓦片是否是山坡类型
+ * @param {number} tile
+ * @returns {boolean}
+ */
+export function isHillTile(tile) {
+  return tile >= TILE.HILL_TL && tile <= TILE.HILL_BR;
+}
+
+/**
+ * 判断瓦片是否是石块类型
+ * @param {number} tile
+ * @returns {boolean}
+ */
+export function isStoneTile(tile) {
+  return tile >= TILE.STONE_SMALL && tile <= TILE.STONE_3;
+}
+
+/**
+ * 判断瓦片是否是岩块类型
+ * @param {number} tile
+ * @returns {boolean}
+ */
+export function isRockTile(tile) {
+  return tile >= TILE.ROCK_SMALL && tile <= TILE.ROCK_3;
+}
+
+/**
+ * 判断瓦片是否是草丛/浆果丛类型
+ * @param {number} tile
+ * @returns {boolean}
+ */
+export function isBushTile(tile) {
+  return tile === TILE.BUSH || tile === TILE.BERRY;
+}
+
+/**
+ * 在地图上随机生成装饰物
+ * 只会在草地格子上放置，不覆盖道路、已有装饰物等
+ * 支持聚集效应：少量概率在已有装饰物附近密集出现
  *
  * @param {object} options
  * @param {Uint8Array[]} options.map - 地图数据（会被原地修改）
  * @param {number} options.mapW - 地图列数
  * @param {number} options.mapH - 地图行数
- * @param {number} [options.count=60] - 生成树木的数量
+ * @param {Array<{tile: number, weight: number}>} options.variants - 装饰物变体权重表
+ * @param {number} [options.count=30] - 生成装饰物的数量
  * @param {number} [options.seed] - 随机种子（可选，用于可重复生成）
- * @param {number} [options.clusterChance=0.25] - 聚集概率（0~1），已有树附近继续生成树的概率
- * @param {number} [options.clusterRadius=2] - 聚集半径，在已有树周围多少格范围内尝试聚集
- * @returns {{ trees: Array<{x: number, y: number, type: number}> }} 生成的树木列表
+ * @param {number} [options.clusterChance=0.2] - 聚集概率（0~1）
+ * @param {number} [options.clusterRadius=2] - 聚集半径
+ * @returns {{ decorations: Array<{x: number, y: number, type: number}> }} 生成的装饰物列表
  */
-export function generateTrees(options) {
+export function generateDecorations(options) {
   const {
     map,
     mapW,
     mapH,
-    count = 60,
+    variants,
+    count = 30,
     seed,
-    clusterChance = 0.25,
+    clusterChance = 0.2,
     clusterRadius = 2,
   } = options;
 
-  // 收集所有草地格子
+  if (!variants || variants.length === 0) return { decorations: [] };
+
+  // 收集所有可用草地格子
   const grassCells = [];
   for (let y = 0; y < mapH; y++) {
     for (let x = 0; x < mapW; x++) {
@@ -52,7 +94,7 @@ export function generateTrees(options) {
     }
   }
 
-  if (grassCells.length === 0) return { trees: [] };
+  if (grassCells.length === 0) return { decorations: [] };
 
   // 简单的伪随机数生成器（支持种子）
   let rngState = seed ?? Date.now();
@@ -68,31 +110,26 @@ export function generateTrees(options) {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
 
-  // 预计算树木类型权重累积表
-  const totalWeight = TREE_VARIANTS.reduce((s, v) => s + v.weight, 0);
+  // 预计算变体权重累积表
+  const totalWeight = variants.reduce((s, v) => s + v.weight, 0);
   const cumWeights = [];
   let cum = 0;
-  for (const v of TREE_VARIANTS) {
+  for (const v of variants) {
     cum += v.weight;
     cumWeights.push({ tile: v.tile, cum });
   }
 
   const actualCount = Math.min(count, shuffled.length);
-  const trees = [];
-  // 记录已放置树的位置，用于聚集判断
-  const treePositions = new Set();
-  // 记录已使用的格子，避免重复放置
+  const decorations = [];
   const usedPositions = new Set();
 
   for (let i = 0; i < actualCount; i++) {
     let x, y;
 
-    // 聚集效应：如果已有树，尝试在已有树附近生成
-    if (trees.length > 0 && random() < clusterChance) {
-      // 随机选一个已有的树作为聚集中心
-      const centerIndex = Math.floor(random() * trees.length);
-      const center = trees[centerIndex];
-      // 在聚集半径内随机找一个草地格子
+    // 聚集效应：如果已有装饰物，尝试在附近生成
+    if (decorations.length > 0 && random() < clusterChance) {
+      const centerIndex = Math.floor(random() * decorations.length);
+      const center = decorations[centerIndex];
       const candidates = [];
       for (let dy = -clusterRadius; dy <= clusterRadius; dy++) {
         for (let dx = -clusterRadius; dx <= clusterRadius; dx++) {
@@ -116,7 +153,6 @@ export function generateTrees(options) {
 
     // 如果没有触发聚集或聚集失败，使用随机位置
     if (x === undefined || y === undefined) {
-      // 从剩余随机位置中找一个未使用的
       let found = false;
       while (i < shuffled.length && !found) {
         const candidate = shuffled[i];
@@ -126,32 +162,30 @@ export function generateTrees(options) {
           y = candidate.y;
           found = true;
         }
-        // 如果当前位置已被使用，继续往后找
         if (!found) i++;
       }
-      if (!found) break; // 没有可用位置了
+      if (!found) break;
     }
 
     const key = `${x},${y}`;
     if (usedPositions.has(key)) continue;
 
     usedPositions.add(key);
-    // 按权重随机选择树木类型
-    const type = _weightedRandomTree(cumWeights, totalWeight);
+    const type = _weightedRandom(cumWeights, totalWeight);
     map[y][x] = type;
-    trees.push({ x, y, type });
+    decorations.push({ x, y, type });
   }
 
-  return { trees };
+  return { decorations };
 }
 
 /**
- * 加权随机选择树木类型
+ * 加权随机选择
  * @param {Array<{tile: number, cum: number}>} cumWeights - 累积权重表
  * @param {number} totalWeight - 总权重
  * @returns {number} TILE 枚举值
  */
-function _weightedRandomTree(cumWeights, totalWeight) {
+function _weightedRandom(cumWeights, totalWeight) {
   const r = Math.random() * totalWeight;
   for (const { tile, cum } of cumWeights) {
     if (r < cum) return tile;

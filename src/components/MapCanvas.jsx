@@ -1,76 +1,25 @@
-import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
-import { MapData } from '../map/mapData';
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { MapCanvasRenderer } from '../map/renderer';
-import { MAP_W, MAP_H } from '../map/constants';
 
-const MapCanvas = forwardRef(function MapCanvas({ onMapGenerated, onViewportChange, onTileHover }, ref) {
+const MapCanvas = forwardRef(function MapCanvas({ onViewportChange, onTileHover, mapOptions }, ref) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
-  const mapDataRef = useRef(null);
   const initRef = useRef(false);
   const [loading, setLoading] = useState(true);
 
-  /**
-   * 生成地图数据（纯数据层，不涉及渲染）
-   * @returns {MapData}
-   */
-  const generateMapData = useCallback(() => {
-    const mapData = new MapData();
-    mapData.init(MAP_W, MAP_H);
-
-    // 池塘参数
-    const pondX = 3;
-    const pondY = 2;
-    const pondW = 5;
-    const pondH = 4;
-    const pondInfo = mapData.addPond({ pondX, pondY, pondW, pondH });
-
-    // 普通道路（十字路，避开池塘区域）
-    const roadY = pondInfo.pondTop - 1;
-    const roadX = pondInfo.pondLeft - 2;
-    mapData.addRoad({
-      segments: [
-        { start: [0, roadY], end: [MAP_W - 1, roadY] },        // 水平路（池塘上方）
-        { start: [roadX, 0], end: [roadX, MAP_H - 1] },        // 垂直路（池塘左侧）
-      ],
-    });
-
-    // 石板路（池塘右侧区域）
-    const stoneRoadX = pondInfo.pondLeft + pondW + 3;
-    const stoneRoadY = pondInfo.pondTop + Math.floor(pondH / 2);
-    mapData.addRoad({
-      type: 'stone',
-      segments: [
-        { start: [stoneRoadX - 4, stoneRoadY], end: [stoneRoadX + 4, stoneRoadY] },  // 石板水平路
-        { start: [stoneRoadX, stoneRoadY - 4], end: [stoneRoadX, stoneRoadY + 4] },  // 石板垂直路（十字）
-        { start: [stoneRoadX + 4, stoneRoadY], end: [stoneRoadX + 8, stoneRoadY + 3] }, // 丁字石板路
-      ],
-    });
-
-    // 树木（随机生成在草地上，池塘和道路之后生成以确保不覆盖）
-    mapData.addTrees({ count: 40, bigRatio: 0.4 });
-
-    return mapData;
-  }, []);
-
-  // 重新生成地图
-  const regenerate = useCallback(() => {
-    const renderer = rendererRef.current;
-    if (!renderer) return;
-
-    const mapData = generateMapData();
-    mapDataRef.current = mapData;
-    renderer.render(mapData);
-    renderer.resetView();
-
-    if (onMapGenerated) onMapGenerated(mapData.map);
-  }, [generateMapData, onMapGenerated]);
-
+  // 重置视图
   const resetView = useCallback(() => {
     const renderer = rendererRef.current;
     if (renderer) renderer.resetView();
   }, []);
 
+  // 居中到原点
+  const centerToOrigin = useCallback(() => {
+    const renderer = rendererRef.current;
+    if (renderer) renderer.centerOn(0, 0);
+  }, []);
+
+  // 导出PNG
   const exportMap = useCallback(() => {
     const renderer = rendererRef.current;
     if (renderer) renderer.exportPNG();
@@ -78,15 +27,15 @@ const MapCanvas = forwardRef(function MapCanvas({ onMapGenerated, onViewportChan
 
   // 暴露方法给父组件
   useImperativeHandle(ref, () => ({
-    resetView, regenerate, exportMap,
-  }), [resetView, regenerate, exportMap]);
+    resetView, centerToOrigin, exportMap,
+  }), [resetView, centerToOrigin, exportMap]);
 
   // 初始化
   useEffect(() => {
     if (!containerRef.current || initRef.current) return;
     initRef.current = true;
 
-    const renderer = new MapCanvasRenderer();
+    const renderer = new MapCanvasRenderer(mapOptions);
     rendererRef.current = renderer;
 
     const init = async () => {
@@ -96,49 +45,35 @@ const MapCanvas = forwardRef(function MapCanvas({ onMapGenerated, onViewportChan
       // 2. 加载素材
       await renderer.loadAssets();
 
-      // 3. 生成地图数据（纯数据操作）
-      const mapData = generateMapData();
-      mapDataRef.current = mapData;
+      // 3. 注册回调
+      if (onViewportChange) {
+        renderer.setOnViewportChange(onViewportChange);
+      }
+      if (onTileHover) {
+        renderer.setOnTileHover(onTileHover);
+      }
 
-      // 4. 渲染到画布
-      renderer.render(mapData);
-      renderer.resetView();
+      // 4. 首次渲染
+      renderer.centerOn(0, 0);
+      renderer.renderInitial();
 
       setLoading(false);
-      if (onMapGenerated) onMapGenerated(mapData.map);
 
-      // 5. 注册交互事件
-      const canvas = renderer.getCanvas();
-
-      // 鼠标悬停
-      const handleMouseMove = (e) => {
-        if (onTileHover && mapDataRef.current) {
-          const { tileX, tileY, valid } = renderer.screenToTile(
-            e.clientX, e.clientY, mapData.mapW, mapData.mapH
-          );
-          if (valid) {
-            onTileHover(tileX, tileY, mapDataRef.current.map[tileY][tileX]);
-          }
-        }
-      };
-      canvas.addEventListener('mousemove', handleMouseMove);
-
-      // 视口信息上报（每5帧）
+      // 5. 视口信息定时上报（每10帧）
+      const ticker = renderer.getTicker();
       let frameCount = 0;
       const tickerFn = () => {
         frameCount++;
-        if (frameCount % 5 !== 0) return;
+        if (frameCount % 10 !== 0) return;
         if (onViewportChange) {
-          const info = renderer.getViewportInfo(mapData.mapW, mapData.mapH);
+          const info = renderer.getViewportInfo();
           if (info) onViewportChange(info);
         }
       };
-      const ticker = renderer.getTicker();
       if (ticker) ticker.add(tickerFn);
 
       // 保存清理函数
       renderer._cleanup = () => {
-        canvas.removeEventListener('mousemove', handleMouseMove);
         if (ticker) ticker.remove(tickerFn);
       };
     };
@@ -167,7 +102,7 @@ const MapCanvas = forwardRef(function MapCanvas({ onMapGenerated, onViewportChan
             borderTop: '4px solid #4a9eff', borderRadius: '50%',
             animation: 'spin 0.8s linear infinite', marginBottom: 16,
           }} />
-          <div>正在生成地图...</div>
+          <div>正在生成无限世界...</div>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
