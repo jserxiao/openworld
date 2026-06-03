@@ -27,7 +27,7 @@ import { createWorld, addEntity, removeEntity } from 'bitecs';
 import { defineComponent, Types, defineQuery, enterQuery, exitQuery,
          addComponent, removeComponent, hasComponent } from 'bitecs/legacy';
 import * as PIXI from 'pixi.js';
-import { TILE, WATER_CONFIG, NAVIGATION_CONFIG, COLLISION_CONFIG, COMBAT_RUNTIME_CONFIG, FLEET_CONFIG } from './constants';
+import { TILE, WATER_CONFIG, DIRT_CONFIG, NAVIGATION_CONFIG, COLLISION_CONFIG, COMBAT_RUNTIME_CONFIG, FLEET_CONFIG } from './constants';
 import { gameEvents, GameEvent } from './eventBus';
 import { SpatialHash } from './spatialHash';
 
@@ -495,7 +495,8 @@ export class ShipFleetECS {
     const shipTexture = this._textures[TILE.SHIP];
 
     const waterMinX = shoreX + 2;
-    const waterMaxX = shoreX + 100;
+    // 船只活动范围不能超过土地区域（右岸线处为沙滩，再往右是土地）
+    const waterMaxX = Math.min(shoreX + 100, DIRT_CONFIG.dirtStartX - 2);
 
     const tileW = this._tileSize.w;
     const zoom = this._viewport.zoom;
@@ -521,6 +522,7 @@ export class ShipFleetECS {
       } else {
         x = waterMinX + FLEET_CONFIG.farStart + Math.random() * FLEET_CONFIG.farRange;
       }
+      x = Math.min(x, waterMaxX);
 
       const y = waterMinY + Math.random() * (waterMaxY - waterMinY);
       const speed = isPirate ? (FLEET_CONFIG.pirateSpeedMin + Math.random() * FLEET_CONFIG.pirateSpeedRange) : (FLEET_CONFIG.shipSpeedMin + Math.random() * FLEET_CONFIG.shipSpeedRange);

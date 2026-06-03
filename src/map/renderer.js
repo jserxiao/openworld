@@ -14,14 +14,14 @@
  */
 
 import * as PIXI from 'pixi.js';
-import { TILE, TILE_ROTATION, CHUNK_SIZE, CHUNK_PRELOAD_MARGIN, WATER_CONFIG } from './constants';
+import { TILE, TILE_ROTATION, CHUNK_SIZE, CHUNK_PRELOAD_MARGIN, WATER_CONFIG, DIRT_CONFIG } from './constants';
 import { ChunkManager } from './chunk';
 import { Viewport } from './viewport';
 import { InteractionController } from './interaction';
 import { AssetLoader } from './assetLoader';
 import { ShipFleetECS as ShipFleet, Position, Navigating, Combat, targetQuery } from './ecs';
 import { hasComponent } from 'bitecs/legacy';
-import { isRoadTile, isHillTile, isBeachTile, isDecorSprite, isTreeTile, isDecorationTile } from './tileUtils';
+import { isRoadTile, isHillTile, isBeachTile, isDecorSprite, isTreeTile, isDecorationTile, isDirtRoadTile, isDirtTile, isPurpleTreeTile, isMalachiteTile } from './tileUtils';
 import { gameEvents, GameEvent } from './eventBus';
 import { createSpritePool, createContainerPool } from './objectPool';
 import { LODManager } from './lodManager';
@@ -356,11 +356,22 @@ export class MapCanvasRenderer {
         const px = lx * tileW;
         const py = ly * tileH;
 
-        // 装饰物：先铺草地底图，装饰物精灵单独收集
+        // 确定当前格的底图类型：根据瓦片类型或世界坐标判断
+        // 土地/土路/紫树/孔雀石都属于土地区域，底图用 dirtMap
+        const worldX = offsetX + lx;
+        const isDirtArea = isDirtTile(tile) || isDirtRoadTile(tile) || isPurpleTreeTile(tile) || isMalachiteTile(tile)
+          || worldX >= DIRT_CONFIG.dirtStartX;
+        const bgTile = isDirtArea
+          ? (chunk.dirtMap && chunk.dirtMap[ly] ? chunk.dirtMap[ly][lx] : TILE.DIRT_1)
+          : chunk.grassMap[ly][lx];
+        const bgTexture = isDirtArea
+          ? (textures[bgTile] || textures[TILE.DIRT_1] || textures[TILE.GRASS])
+          : (textures[bgTile] || textures[TILE.GRASS]);
+
+        // 装饰物：先铺底图（草地或土地），装饰物精灵单独收集
         if (isDecorSprite(tile)) {
-          const grassTile = chunk.grassMap[ly][lx];
           const bgSprite = this._spritePool.acquire();
-          bgSprite.texture = textures[grassTile] || textures[TILE.GRASS];
+          bgSprite.texture = bgTexture;
           bgSprite.x = px;
           bgSprite.y = py;
           groundGroup.addChild(bgSprite);
@@ -368,7 +379,6 @@ export class MapCanvasRenderer {
 
           const decorSprite = this._spritePool.acquire();
           decorSprite.texture = textures[tile] || textures[TILE.GRASS];
-          const worldX = offsetX + lx;
           const worldY = offsetY + ly;
           decorSprite.x = worldX;
           decorSprite.y = worldY;
@@ -379,11 +389,10 @@ export class MapCanvasRenderer {
           continue;
         }
 
-        // 道路和山坡铺草地底图
+        // 道路和山坡铺底图（草地或土地）
         if (isRoadTile(tile) || isHillTile(tile)) {
-          const grassTile = chunk.grassMap[ly][lx];
           const bgSprite = this._spritePool.acquire();
-          bgSprite.texture = textures[grassTile] || textures[TILE.GRASS];
+          bgSprite.texture = bgTexture;
           bgSprite.x = px;
           bgSprite.y = py;
           groundGroup.addChild(bgSprite);
@@ -401,9 +410,14 @@ export class MapCanvasRenderer {
         }
 
         const sprite = this._spritePool.acquire();
-        sprite.texture = tile === TILE.GRASS
-          ? (textures[chunk.grassMap[ly][lx]] || textures[TILE.GRASS])
-          : (textures[tile] || textures[TILE.GRASS]);
+        // 土地占位符用 dirtMap 变体，草地占位符用 grassMap 变体
+        if (tile === TILE.GRASS) {
+          sprite.texture = textures[chunk.grassMap[ly][lx]] || textures[TILE.GRASS];
+        } else if (tile === TILE.DIRT) {
+          sprite.texture = textures[(chunk.dirtMap && chunk.dirtMap[ly]) ? chunk.dirtMap[ly][lx] : TILE.DIRT_1] || textures[TILE.DIRT_1] || textures[TILE.GRASS];
+        } else {
+          sprite.texture = textures[tile] || textures[TILE.GRASS];
+        }
         const rotation = TILE_ROTATION[tile] || 0;
         if (rotation !== 0) {
           sprite.anchor.set(0.5);

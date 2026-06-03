@@ -122,6 +122,38 @@ export const TILE = {
   CANNONBALL: 63,   // 弹药
   EXPLOSION: 64,    // 爆炸
   FIRE: 65,         // 火苗
+
+  // ─── 土地区域 ───
+  DIRT: 66,                // 土地（占位符，实际渲染由 dirtMap 决定用哪个变体）
+  DIRT_1: 67,              // 土1
+  DIRT_2: 68,              // 土2
+
+  // 土路
+  DIRT_ROAD_H: 69,             // 土直路-水平
+  DIRT_ROAD_V: 70,             // 土直路-垂直
+  DIRT_ROAD_CORNER_TL: 71,     // 土路拐角-左上开口
+  DIRT_ROAD_CORNER_TR: 72,     // 土路拐角-右上开口
+  DIRT_ROAD_CORNER_BL: 73,     // 土路拐角-左下开口
+  DIRT_ROAD_CORNER_BR: 74,     // 土路拐角-右下开口
+  DIRT_ROAD_T_DOWN: 75,        // 土丁字-下开口
+  DIRT_ROAD_T_LEFT: 76,        // 土丁字-左开口
+  DIRT_ROAD_T_UP: 77,          // 土丁字-上开口
+  DIRT_ROAD_T_RIGHT: 78,       // 土丁字-右开口
+  DIRT_ROAD_CROSS: 79,         // 土十字路口
+  DIRT_ROAD_END_UP: 80,        // 土路尽头-朝上
+  DIRT_ROAD_END_RIGHT: 81,     // 土路尽头-朝右
+  DIRT_ROAD_END_DOWN: 82,      // 土路尽头-朝下
+  DIRT_ROAD_END_LEFT: 83,      // 土路尽头-朝左
+
+  // 紫树（土地图专有）
+  PURPLE_TREE_1: 84,       // 一棵紫树
+  PURPLE_TREE_2: 85,       // 两棵紫树
+  PURPLE_TREE_3: 86,       // 三棵紫树
+  PURPLE_TREE_MANY: 87,    // 大量紫树
+
+  // 孔雀石（土地图专有）
+  MALACHITE_1: 88,         // 一块孔雀石
+  MALACHITE_MANY: 89,      // 一堆孔雀石
 };
 
 // ────────────────────────────────────────────
@@ -195,6 +227,30 @@ export const TILE_NAMES = {
   [TILE.CANNONBALL]: '弹药',
   [TILE.EXPLOSION]: '爆炸',
   [TILE.FIRE]: '火苗',
+  [TILE.DIRT]: '土地',
+  [TILE.DIRT_1]: '土1',
+  [TILE.DIRT_2]: '土2',
+  [TILE.DIRT_ROAD_H]: '土直路(水平)',
+  [TILE.DIRT_ROAD_V]: '土直路(垂直)',
+  [TILE.DIRT_ROAD_CORNER_TL]: '土路拐角(左上开口)',
+  [TILE.DIRT_ROAD_CORNER_TR]: '土路拐角(右上开口)',
+  [TILE.DIRT_ROAD_CORNER_BL]: '土路拐角(左下开口)',
+  [TILE.DIRT_ROAD_CORNER_BR]: '土路拐角(右下开口)',
+  [TILE.DIRT_ROAD_T_DOWN]: '土丁字(下开口)',
+  [TILE.DIRT_ROAD_T_LEFT]: '土丁字(左开口)',
+  [TILE.DIRT_ROAD_T_UP]: '土丁字(上开口)',
+  [TILE.DIRT_ROAD_T_RIGHT]: '土丁字(右开口)',
+  [TILE.DIRT_ROAD_CROSS]: '土十字路口',
+  [TILE.DIRT_ROAD_END_UP]: '土路尽头(朝上)',
+  [TILE.DIRT_ROAD_END_RIGHT]: '土路尽头(朝右)',
+  [TILE.DIRT_ROAD_END_DOWN]: '土路尽头(朝下)',
+  [TILE.DIRT_ROAD_END_LEFT]: '土路尽头(朝左)',
+  [TILE.PURPLE_TREE_1]: '一棵紫树',
+  [TILE.PURPLE_TREE_2]: '两棵紫树',
+  [TILE.PURPLE_TREE_3]: '三棵紫树',
+  [TILE.PURPLE_TREE_MANY]: '大量紫树',
+  [TILE.MALACHITE_1]: '一块孔雀石',
+  [TILE.MALACHITE_MANY]: '一堆孔雀石',
 };
 
 // ────────────────────────────────────────────
@@ -231,6 +287,19 @@ _TILE_COLORS[TILE.PIRATE_SHIP] = 0x4A3728;
 _TILE_COLORS[TILE.CANNONBALL] = 0x333333;
 _TILE_COLORS[TILE.EXPLOSION] = 0xFF6600;
 _TILE_COLORS[TILE.FIRE] = 0xFF4400;
+
+// 土地区域
+assignKeys(_TILE_COLORS, [TILE.DIRT, TILE.DIRT_1], 0x8B7355);
+_TILE_COLORS[TILE.DIRT_2] = 0x9B8365;
+assignRange(_TILE_COLORS, TILE.DIRT_ROAD_H, TILE.DIRT_ROAD_CROSS, 0x7A6248);
+assignKeys(_TILE_COLORS, [TILE.DIRT_ROAD_END_UP, TILE.DIRT_ROAD_END_RIGHT, TILE.DIRT_ROAD_END_DOWN, TILE.DIRT_ROAD_END_LEFT], 0x7A6248);
+_TILE_COLORS[TILE.PURPLE_TREE_1] = 0x6B2D8B;
+_TILE_COLORS[TILE.PURPLE_TREE_2] = 0x5B1D7B;
+_TILE_COLORS[TILE.PURPLE_TREE_3] = 0x4B0D6B;
+_TILE_COLORS[TILE.PURPLE_TREE_MANY] = 0x3B005B;
+_TILE_COLORS[TILE.MALACHITE_1] = 0x0E8C6E;
+_TILE_COLORS[TILE.MALACHITE_MANY] = 0x0C7A5E;
+
 export const TILE_COLORS = _TILE_COLORS;
 
 // ────────────────────────────────────────────
@@ -304,6 +373,32 @@ export const TILE_ASSETS = {
   [TILE.CANNONBALL]: 'assets/弹药.png',
   [TILE.EXPLOSION]: 'assets/爆炸.png',
   [TILE.FIRE]: 'assets/火苗.png',
+
+  // 土地区域
+  [TILE.DIRT]: 'assets/土1.png',
+  [TILE.DIRT_1]: 'assets/土1.png',
+  [TILE.DIRT_2]: 'assets/土2.png',
+  [TILE.DIRT_ROAD_H]: 'assets/土直路.png',
+  [TILE.DIRT_ROAD_V]: 'assets/土直路.png',
+  [TILE.DIRT_ROAD_CORNER_TL]: 'assets/土路拐角.png',
+  [TILE.DIRT_ROAD_CORNER_TR]: 'assets/土路拐角.png',
+  [TILE.DIRT_ROAD_CORNER_BL]: 'assets/土路拐角.png',
+  [TILE.DIRT_ROAD_CORNER_BR]: 'assets/土路拐角.png',
+  [TILE.DIRT_ROAD_T_DOWN]: 'assets/土丁字路连接.png',
+  [TILE.DIRT_ROAD_T_LEFT]: 'assets/土丁字路连接.png',
+  [TILE.DIRT_ROAD_T_UP]: 'assets/土丁字路连接.png',
+  [TILE.DIRT_ROAD_T_RIGHT]: 'assets/土丁字路连接.png',
+  [TILE.DIRT_ROAD_CROSS]: 'assets/土十字路连接.png',
+  [TILE.DIRT_ROAD_END_UP]: 'assets/土路尽头.png',
+  [TILE.DIRT_ROAD_END_RIGHT]: 'assets/土路尽头.png',
+  [TILE.DIRT_ROAD_END_DOWN]: 'assets/土路尽头.png',
+  [TILE.DIRT_ROAD_END_LEFT]: 'assets/土路尽头.png',
+  [TILE.PURPLE_TREE_1]: 'assets/一棵紫树.png',
+  [TILE.PURPLE_TREE_2]: 'assets/两棵紫树.png',
+  [TILE.PURPLE_TREE_3]: 'assets/三棵紫树.png',
+  [TILE.PURPLE_TREE_MANY]: 'assets/大量紫树.png',
+  [TILE.MALACHITE_1]: 'assets/一块孔雀石.png',
+  [TILE.MALACHITE_MANY]: 'assets/一堆孔雀石.png',
 };
 
 // ────────────────────────────────────────────
@@ -373,6 +468,30 @@ assignKeys(_TILE_ROTATION, [TILE.SHIP, TILE.PIRATE_SHIP], 0);
 // 战斗特效旋转由弹道/特效系统动态控制
 assignKeys(_TILE_ROTATION, [TILE.CANNONBALL, TILE.EXPLOSION, TILE.FIRE], 0);
 
+// 土地底图不旋转
+assignKeys(_TILE_ROTATION, [TILE.DIRT, TILE.DIRT_1, TILE.DIRT_2], 0);
+
+// 土路旋转（与普通路相同规律）
+_TILE_ROTATION[TILE.DIRT_ROAD_H] = 0;
+_TILE_ROTATION[TILE.DIRT_ROAD_V] = PI / 2;
+_TILE_ROTATION[TILE.DIRT_ROAD_CORNER_TL] = PI;
+_TILE_ROTATION[TILE.DIRT_ROAD_CORNER_TR] = PI * 3 / 2;
+_TILE_ROTATION[TILE.DIRT_ROAD_CORNER_BL] = PI / 2;
+_TILE_ROTATION[TILE.DIRT_ROAD_CORNER_BR] = 0;
+_TILE_ROTATION[TILE.DIRT_ROAD_T_DOWN] = 0;
+_TILE_ROTATION[TILE.DIRT_ROAD_T_LEFT] = PI / 2;
+_TILE_ROTATION[TILE.DIRT_ROAD_T_UP] = PI;
+_TILE_ROTATION[TILE.DIRT_ROAD_T_RIGHT] = PI * 3 / 2;
+_TILE_ROTATION[TILE.DIRT_ROAD_CROSS] = 0;
+_TILE_ROTATION[TILE.DIRT_ROAD_END_UP] = PI * 3 / 2;
+_TILE_ROTATION[TILE.DIRT_ROAD_END_RIGHT] = 0;
+_TILE_ROTATION[TILE.DIRT_ROAD_END_DOWN] = PI / 2;
+_TILE_ROTATION[TILE.DIRT_ROAD_END_LEFT] = PI;
+
+// 紫树/孔雀石不旋转
+assignRange(_TILE_ROTATION, TILE.PURPLE_TREE_1, TILE.PURPLE_TREE_MANY, 0);
+assignKeys(_TILE_ROTATION, [TILE.MALACHITE_1, TILE.MALACHITE_MANY], 0);
+
 export const TILE_ROTATION = _TILE_ROTATION;
 
 // ────────────────────────────────────────────
@@ -420,6 +539,15 @@ export const WATER_CONFIG = {
   shoreX: 80,
 };
 
+/**
+ * 土地区域配置
+ * 土地位于水域右侧，以 worldX > dirtStartX 的区域为基础生成
+ * @property {number} dirtStartX - 土地区域起始X坐标（瓦片坐标，位于水域右侧）
+ */
+export const DIRT_CONFIG = {
+  dirtStartX: 130,
+};
+
 // ────────────────────────────────────────────
 // 变体随机权重
 // ────────────────────────────────────────────
@@ -460,6 +588,30 @@ export const FOREST_VARIANTS = [
   { tile: TILE.TREE_2, weight: 15 },
   { tile: TILE.TREE_3, weight: 35 },
   { tile: TILE.TREE_MANY, weight: 45 },
+];
+
+export const DIRT_VARIANTS = [
+  { tile: TILE.DIRT_1, weight: 50 },
+  { tile: TILE.DIRT_2, weight: 50 },
+];
+
+export const PURPLE_TREE_VARIANTS = [
+  { tile: TILE.PURPLE_TREE_1, weight: 40 },
+  { tile: TILE.PURPLE_TREE_2, weight: 30 },
+  { tile: TILE.PURPLE_TREE_3, weight: 20 },
+  { tile: TILE.PURPLE_TREE_MANY, weight: 10 },
+];
+
+export const MALACHITE_VARIANTS = [
+  { tile: TILE.MALACHITE_1, weight: 60 },
+  { tile: TILE.MALACHITE_MANY, weight: 40 },
+];
+
+export const PURPLE_FOREST_VARIANTS = [
+  { tile: TILE.PURPLE_TREE_1, weight: 5 },
+  { tile: TILE.PURPLE_TREE_2, weight: 15 },
+  { tile: TILE.PURPLE_TREE_3, weight: 35 },
+  { tile: TILE.PURPLE_TREE_MANY, weight: 45 },
 ];
 
 // ────────────────────────────────────────────

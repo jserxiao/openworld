@@ -1,16 +1,17 @@
 // 常量
-export { TILE, TILE_NAMES, TILE_COLORS, TILE_ASSETS, TILE_ROTATION, DIR, DX, DY, MAP_W, MAP_H, GRASS_VARIANTS, TREE_VARIANTS, STONE_VARIANTS, ROCK_VARIANTS, BUSH_VARIANTS, FOREST_VARIANTS, CHUNK_SIZE, MAX_CACHED_CHUNKS, CHUNK_PRELOAD_MARGIN, WORLD_SEED, FOREST_CONFIG } from './constants';
+export { TILE, TILE_NAMES, TILE_COLORS, TILE_ASSETS, TILE_ROTATION, DIR, DX, DY, MAP_W, MAP_H, GRASS_VARIANTS, TREE_VARIANTS, STONE_VARIANTS, ROCK_VARIANTS, BUSH_VARIANTS, FOREST_VARIANTS, DIRT_VARIANTS, PURPLE_TREE_VARIANTS, MALACHITE_VARIANTS, PURPLE_FOREST_VARIANTS, CHUNK_SIZE, MAX_CACHED_CHUNKS, CHUNK_PRELOAD_MARGIN, WORLD_SEED, FOREST_CONFIG, WATER_CONFIG, DIRT_CONFIG } from './constants';
 
 // 公共工具
 export { createNoise, createSeededRandom, buildCumWeights, weightedRandom } from './utils';
 
 // 瓦片类型判断（统一入口）
 export {
-  isRoadTile, isStoneRoadTile,
+  isRoadTile, isStoneRoadTile, isDirtRoadTile,
   isWaterTile, isBeachTile, isWaterAreaTile,
   isHillTile,
-  isTreeTile,
-  isDecorationTile, isStoneTile, isRockTile, isBushTile,
+  isTreeTile, isPurpleTreeTile,
+  isDecorationTile, isStoneTile, isRockTile, isBushTile, isMalachiteTile,
+  isDirtTile,
   needsGrassBackground, isDecorSprite,
 } from './tileUtils';
 

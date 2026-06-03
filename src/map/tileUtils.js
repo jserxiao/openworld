@@ -11,12 +11,14 @@ import { TILE } from './constants';
 // ────────────────────────────────────────────
 
 /**
- * 判断是否是道路类型（包括普通路、石板路、路尽头）
+ * 判断是否是道路类型（包括普通路、石板路、土路、路尽头）
  */
 export function isRoadTile(tile) {
   return (tile >= TILE.ROAD_H && tile <= TILE.ROAD_CROSS)
     || (tile >= TILE.STONE_ROAD_H && tile <= TILE.STONE_ROAD_CROSS)
-    || (tile >= TILE.ROAD_END_UP && tile <= TILE.ROAD_END_LEFT);
+    || (tile >= TILE.ROAD_END_UP && tile <= TILE.ROAD_END_LEFT)
+    || (tile >= TILE.DIRT_ROAD_H && tile <= TILE.DIRT_ROAD_CROSS)
+    || (tile >= TILE.DIRT_ROAD_END_UP && tile <= TILE.DIRT_ROAD_END_LEFT);
 }
 
 /**
@@ -24,6 +26,14 @@ export function isRoadTile(tile) {
  */
 export function isStoneRoadTile(tile) {
   return tile >= TILE.STONE_ROAD_H && tile <= TILE.STONE_ROAD_CROSS;
+}
+
+/**
+ * 判断是否是土路类型
+ */
+export function isDirtRoadTile(tile) {
+  return (tile >= TILE.DIRT_ROAD_H && tile <= TILE.DIRT_ROAD_CROSS)
+    || (tile >= TILE.DIRT_ROAD_END_UP && tile <= TILE.DIRT_ROAD_END_LEFT);
 }
 
 // ────────────────────────────────────────────
@@ -74,18 +84,34 @@ export function isTreeTile(tile) {
     || tile === TILE.TREE_3 || tile === TILE.TREE_MANY;
 }
 
+/**
+ * 判断是否是紫树类型（土地图专有）
+ */
+export function isPurpleTreeTile(tile) {
+  return tile === TILE.PURPLE_TREE_1 || tile === TILE.PURPLE_TREE_2
+    || tile === TILE.PURPLE_TREE_3 || tile === TILE.PURPLE_TREE_MANY;
+}
+
+/**
+ * 判断是否是孔雀石类型（土地图专有）
+ */
+export function isMalachiteTile(tile) {
+  return tile === TILE.MALACHITE_1 || tile === TILE.MALACHITE_MANY;
+}
+
 // ────────────────────────────────────────────
 // 装饰物类型判断
 // ────────────────────────────────────────────
 
 /**
- * 判断是否是装饰物类型（石块、岩块、草丛、浆果丛）
+ * 判断是否是装饰物类型（石块、岩块、草丛、浆果丛、孔雀石）
  */
 export function isDecorationTile(tile) {
   return (tile >= TILE.STONE_SMALL && tile <= TILE.STONE_3)
     || (tile >= TILE.ROCK_SMALL && tile <= TILE.ROCK_3)
     || tile === TILE.BUSH
-    || tile === TILE.BERRY;
+    || tile === TILE.BERRY
+    || isMalachiteTile(tile);
 }
 
 /**
@@ -117,12 +143,19 @@ export function isBushTile(tile) {
  * 判断瓦片是否需要草地底图（装饰物、道路、山坡等覆盖在草地上的瓦片）
  */
 export function needsGrassBackground(tile) {
-  return isTreeTile(tile) || isDecorationTile(tile) || isRoadTile(tile) || isHillTile(tile);
+  return isTreeTile(tile) || isPurpleTreeTile(tile) || isDecorationTile(tile) || isRoadTile(tile) || isHillTile(tile);
 }
 
 /**
  * 判断瓦片是否是装饰性精灵（需要独立渲染并参与全局Y排序）
  */
 export function isDecorSprite(tile) {
-  return isTreeTile(tile) || isDecorationTile(tile);
+  return isTreeTile(tile) || isPurpleTreeTile(tile) || isDecorationTile(tile);
+}
+
+/**
+ * 判断是否属于土地区域（土1/土2底图瓦片）
+ */
+export function isDirtTile(tile) {
+  return tile === TILE.DIRT || tile === TILE.DIRT_1 || tile === TILE.DIRT_2;
 }

@@ -28,6 +28,8 @@ export class Chunk {
     this.map = [];
     /** @type {Uint8Array[]} 草地变体数据 [localY][localX] */
     this.grassMap = [];
+    /** @type {Uint8Array[]} 土地变体数据 [localY][localX] */
+    this.dirtMap = [];
   }
 }
 
@@ -97,7 +99,7 @@ export class ChunkManager {
    */
   _onWorkerMessage(data) {
     if (data.type === 'chunk') {
-      const { chunkX, chunkY, mapBuffers, grassBuffers } = data;
+      const { chunkX, chunkY, mapBuffers, grassBuffers, dirtBuffers } = data;
       const key = this._key(chunkX, chunkY);
 
       // 从 ArrayBuffer 重建 Chunk
@@ -105,6 +107,7 @@ export class ChunkManager {
       for (let i = 0; i < mapBuffers.length; i++) {
         chunk.map[i] = new Uint8Array(mapBuffers[i]);
         chunk.grassMap[i] = new Uint8Array(grassBuffers[i]);
+        chunk.dirtMap[i] = dirtBuffers ? new Uint8Array(dirtBuffers[i]) : new Uint8Array(mapBuffers[i].length);
       }
 
       this._addChunk(key, chunk);
@@ -124,12 +127,13 @@ export class ChunkManager {
     }
 
     if (data.type === 'batch') {
-      for (const { chunkX, chunkY, mapBuffers, grassBuffers } of data.results) {
+      for (const { chunkX, chunkY, mapBuffers, grassBuffers, dirtBuffers } of data.results) {
         const key = this._key(chunkX, chunkY);
         const chunk = new Chunk(chunkX, chunkY);
         for (let i = 0; i < mapBuffers.length; i++) {
           chunk.map[i] = new Uint8Array(mapBuffers[i]);
           chunk.grassMap[i] = new Uint8Array(grassBuffers[i]);
+          chunk.dirtMap[i] = dirtBuffers ? new Uint8Array(dirtBuffers[i]) : new Uint8Array(mapBuffers[i].length);
         }
 
         this._addChunk(key, chunk);
@@ -393,6 +397,19 @@ export class ChunkManager {
     const lx = ((worldX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     const ly = ((worldY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     return chunk.grassMap[ly][lx];
+  }
+
+  /**
+   * 获取指定世界坐标的土地变体
+   */
+  getDirtTile(worldX, worldY) {
+    const cx = Math.floor(worldX / CHUNK_SIZE);
+    const cy = Math.floor(worldY / CHUNK_SIZE);
+    const chunk = this.getChunkIfLoaded(cx, cy);
+    if (!chunk || !chunk.dirtMap || chunk.dirtMap.length === 0) return 0;
+    const lx = ((worldX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    const ly = ((worldY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    return chunk.dirtMap[ly][lx];
   }
 
   /**
