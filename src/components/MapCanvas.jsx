@@ -51,17 +51,16 @@ const MapCanvas = forwardRef(function MapCanvas({ mapOptions }, ref) {
       // 1. 初始化画布
       await renderer.init(containerRef.current);
 
-      // 2. 加载素材
+      // 2. 加载素材（非渐进式，等待所有纹理就绪）
       await renderer.loadAssets();
 
-      // 3. 回调已通过事件总线自动桥接到 Zustand，无需手动注册
-
-      // 4. 首次渲染（异步加载区块，Worker 生成完后自动渲染）
-      // 将初始视口定位到岸线附近，让草地/沙滩/水域同时可见
+      // 3. 首次渲染：等待所有区块渲染完成后，画布淡入显示
+      //    然后才关闭加载画面，确保用户看到的是完整地图而非色块
       renderer.centerOnShoreline();
-      renderer.renderInitial(); // 异步，不等所有区块完成
+      await renderer.renderInitial();
 
-      setLoading(false);
+      // 4. 画布已淡入，延迟关闭加载画面让过渡更平滑
+      setTimeout(() => setLoading(false), 100);
 
       // 5. 视口信息定时上报（每10帧）
       const ticker = renderer.getTicker();
@@ -94,8 +93,8 @@ const MapCanvas = forwardRef(function MapCanvas({ mapOptions }, ref) {
   }, [mapOptions, setLoading]);
 
   return (
-    <>
-      {loading && (
+      <>
+      {!loading ? null : (
         <div className="loading-overlay">
           <div className="loading-spinner" />
           <div className="loading-text">正在生成无限世界...</div>

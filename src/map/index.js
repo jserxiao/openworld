@@ -53,5 +53,14 @@ export { SpatialHash } from './spatialHash';
 // 船精灵
 export { Ship, ShipFleet } from './ship';
 
+// ECS 架构层（含战斗系统）
+export { ShipFleetECS, Combat, combatSystem, targetQuery } from './ecs';
+
+// 弹道管理
+export { ProjectileManager } from './projectileManager';
+
+// 特效管理
+export { VfxManager } from './vfxManager';
+
 // 渲染层
 export { MapCanvasRenderer } from './renderer';

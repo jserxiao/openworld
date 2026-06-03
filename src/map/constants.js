@@ -117,6 +117,11 @@ export const TILE = {
   // 船（动态精灵，不属于区块系统）
   SHIP: 61,
   PIRATE_SHIP: 62,
+
+  // 战斗特效（动态精灵，不属于区块系统）
+  CANNONBALL: 63,   // 弹药
+  EXPLOSION: 64,    // 爆炸
+  FIRE: 65,         // 火苗
 };
 
 // ────────────────────────────────────────────
@@ -187,6 +192,9 @@ export const TILE_NAMES = {
   [TILE.HILL_BR]: '山坡(右下)',
   [TILE.SHIP]: '船',
   [TILE.PIRATE_SHIP]: '海盗船',
+  [TILE.CANNONBALL]: '弹药',
+  [TILE.EXPLOSION]: '爆炸',
+  [TILE.FIRE]: '火苗',
 };
 
 // ────────────────────────────────────────────
@@ -220,6 +228,9 @@ assignKeys(_TILE_COLORS, [TILE.HILL_ML, TILE.HILL_MC, TILE.HILL_MR], 0x7A6248);
 assignKeys(_TILE_COLORS, [TILE.HILL_BL, TILE.HILL_BC, TILE.HILL_BR], 0x6B5344);
 _TILE_COLORS[TILE.SHIP] = 0x8B6914;
 _TILE_COLORS[TILE.PIRATE_SHIP] = 0x4A3728;
+_TILE_COLORS[TILE.CANNONBALL] = 0x333333;
+_TILE_COLORS[TILE.EXPLOSION] = 0xFF6600;
+_TILE_COLORS[TILE.FIRE] = 0xFF4400;
 export const TILE_COLORS = _TILE_COLORS;
 
 // ────────────────────────────────────────────
@@ -290,6 +301,9 @@ export const TILE_ASSETS = {
   [TILE.HILL_BR]: 'assets/山坡右下.png',
   [TILE.SHIP]: 'assets/船.png',
   [TILE.PIRATE_SHIP]: 'assets/海盗船.png',
+  [TILE.CANNONBALL]: 'assets/弹药.png',
+  [TILE.EXPLOSION]: 'assets/爆炸.png',
+  [TILE.FIRE]: 'assets/火苗.png',
 };
 
 // ────────────────────────────────────────────
@@ -355,6 +369,9 @@ assignRange(_TILE_ROTATION, TILE.HILL_TL, TILE.HILL_BR, 0);
 
 // 船旋转由 Ship 动态控制
 assignKeys(_TILE_ROTATION, [TILE.SHIP, TILE.PIRATE_SHIP], 0);
+
+// 战斗特效旋转由弹道/特效系统动态控制
+assignKeys(_TILE_ROTATION, [TILE.CANNONBALL, TILE.EXPLOSION, TILE.FIRE], 0);
 
 export const TILE_ROTATION = _TILE_ROTATION;
 
@@ -444,3 +461,175 @@ export const FOREST_VARIANTS = [
   { tile: TILE.TREE_3, weight: 35 },
   { tile: TILE.TREE_MANY, weight: 45 },
 ];
+
+// ────────────────────────────────────────────
+// 战斗系统常量
+// ────────────────────────────────────────────
+
+/**
+ * 弹道配置
+ * @property {number} size - 弹药精灵尺寸（瓦片坐标单位）
+ * @property {number} speed - 匀速飞行速度（瓦片坐标单位/秒）
+ * @property {number} hitRadius - 命中判定半径（瓦片坐标单位，弹药到达目标点后检测附近实体）
+ * @property {number} maxRange - 弹药最大飞行距离（瓦片坐标单位，超出视为脱靶）
+ * @property {number} poolMax - 弹药精灵池最大容量
+ */
+export const PROJECTILE_CONFIG = {
+  size: 0.175,
+  speed: 6,
+  hitRadius: 1.5,
+  maxRange: 80,
+  poolMax: 64,
+};
+
+/**
+ * 爆炸特效配置
+ * @property {number} duration - 爆炸持续时长（秒）
+ * @property {number} scaleStart - 放大阶段起始缩放
+ * @property {number} scaleEnd - 放大阶段结束缩放（最大尺寸）
+ * @property {number} growRatio - 放大阶段占整个时长的比例 [0, 1]
+ * @property {number} poolMax - 爆炸精灵池最大容量
+ */
+export const EXPLOSION_CONFIG = {
+  duration: 0.6,
+  scaleStart: 0.005,
+  scaleEnd: 0.03,
+  growRatio: 0.5,
+  poolMax: 32,
+};
+
+/**
+ * 火苗特效配置
+ * @property {number} size - 火苗精灵尺寸（瓦片坐标单位）
+ * @property {number} lifetime - 火苗默认持续时间（秒）
+ * @property {number} fadeTime - 淡出时间（秒，生命周期末尾）
+ * @property {number} poolMax - 火苗精灵池最大容量
+ * @property {number} flickerAmp1 - 缩放抖动主振幅
+ * @property {number} flickerFreq1 - 缩放抖动主频率
+ * @property {number} flickerAmp2 - 缩放抖动副振幅
+ * @property {number} flickerFreq2 - 缩放抖动副频率
+ * @property {number} jitterAmp - 位置抖动振幅
+ * @property {number} jitterFreqX - 位置抖动X频率
+ * @property {number} jitterFreqY - 位置抖动Y频率
+ */
+export const FIRE_CONFIG = {
+  size: 0.02,
+  lifetime: 8,
+  fadeTime: 1,
+  poolMax: 64,
+  flickerAmp1: 0.002,
+  flickerFreq1: 12,
+  flickerAmp2: 0.001,
+  flickerFreq2: 7.3,
+  jitterAmp: 0.01,
+  jitterFreqX: 5.7,
+  jitterFreqY: 4.3,
+};
+
+// ────────────────────────────────────────────
+// 航行系统常量
+// ────────────────────────────────────────────
+
+/**
+ * 航行配置
+ * @property {number} turnAmplitude - 航向随机调整幅度（弧度，π/3 ≈ 60°）
+ * @property {number} driftRate - 波浪漂移相位增长率
+ * @property {number} driftAmplitude - 波浪漂移振幅（弧度）
+ * @property {number} bounceHeadingOffset - 边界反弹航向偏移（弧度，π/1.5 ≈ 120°）
+ */
+export const NAVIGATION_CONFIG = {
+  turnAmplitude: Math.PI / 3,
+  driftRate: 0.5,
+  driftAmplitude: 0.02,
+  bounceHeadingOffset: Math.PI / 1.5,
+};
+
+// ────────────────────────────────────────────
+// 碰撞系统常量
+// ────────────────────────────────────────────
+
+/**
+ * 碰撞配置
+ * @property {number} minDist - 最小碰撞距离（瓦片坐标单位）
+ * @property {number} pushFactor - 推离系数（距离差的比例）
+ * @property {number} pushBase - 推离基础量（瓦片坐标单位）
+ * @property {number} headingOffset - 碰撞航向偏移（弧度）
+ */
+export const COLLISION_CONFIG = {
+  minDist: 1.8,
+  pushFactor: 0.5,
+  pushBase: 0.05,
+  headingOffset: Math.PI / 3,
+};
+
+// ────────────────────────────────────────────
+// 战斗系统运行时常量
+// ────────────────────────────────────────────
+
+/**
+ * 战斗运行时配置（系统逻辑中使用的常量，区别于 Combat 组件的实例数据）
+ * @property {number} chargingStart - 蓄力初始值（>0 标记蓄力中）
+ * @property {number} chargingMaxDefault - chargingMax 安全兜底值（秒）
+ * @property {number} speedMin - 攻击后恢复航行速度最小值
+ * @property {number} speedRange - 攻击后恢复航行速度随机范围
+ */
+export const COMBAT_RUNTIME_CONFIG = {
+  chargingStart: 0.01,
+  chargingMaxDefault: 1.5,
+  speedMin: 0.5,
+  speedRange: 0.8,
+};
+
+// ────────────────────────────────────────────
+// 船队生成常量
+// ────────────────────────────────────────────
+
+/**
+ * 船队生成配置
+ * @property {number} pirateChance - 海盗船生成概率
+ * @property {number} posNearWeight - 靠近岸线位置概率阈值
+ * @property {number} posMidWeight - 中距离位置概率阈值
+ * @property {number} nearRange - 近岸线范围（瓦片）
+ * @property {number} midStart - 中距离起始偏移（瓦片）
+ * @property {number} midRange - 中距离范围（瓦片）
+ * @property {number} farStart - 远距离起始偏移（瓦片）
+ * @property {number} farRange - 远距离范围（瓦片）
+ * @property {number} pirateSpeedMin - 海盗船速度最小值
+ * @property {number} pirateSpeedRange - 海盗船速度随机范围
+ * @property {number} shipSpeedMin - 普通船速度最小值
+ * @property {number} shipSpeedRange - 普通船速度随机范围
+ * @property {number} shipCountMin - 最少船只数
+ * @property {number} shipCountRange - 船只数随机范围
+ * @property {number} cooldownMin - 初始冷却最小值（秒）
+ * @property {number} cooldownRange - 初始冷却随机范围（秒）
+ * @property {number} cooldownMaxMin - 攻击间隔最小值（秒）
+ * @property {number} cooldownMaxRange - 攻击间隔随机范围（秒）
+ * @property {number} rangeMin - 攻击范围最小值（瓦片坐标单位）
+ * @property {number} rangeRange - 攻击范围随机范围（瓦片坐标单位）
+ * @property {number} chargingMaxMin - 蓄力时间最小值（秒）
+ * @property {number} chargingMaxRange - 蓄力时间随机范围（秒）
+ */
+export const FLEET_CONFIG = {
+  pirateChance: 0.35,
+  posNearWeight: 0.5,
+  posMidWeight: 0.8,
+  nearRange: 8,
+  midStart: 8,
+  midRange: 20,
+  farStart: 28,
+  farRange: 70,
+  pirateSpeedMin: 0.5,
+  pirateSpeedRange: 0.8,
+  shipSpeedMin: 0.3,
+  shipSpeedRange: 0.6,
+  shipCountMin: 15,
+  shipCountRange: 10,
+  cooldownMin: 2,
+  cooldownRange: 3,
+  cooldownMaxMin: 4,
+  cooldownMaxRange: 3,
+  rangeMin: 30,
+  rangeRange: 20,
+  chargingMaxMin: 1.0,
+  chargingMaxRange: 0.5,
+};

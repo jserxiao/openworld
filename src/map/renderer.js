@@ -19,12 +19,15 @@ import { ChunkManager } from './chunk';
 import { Viewport } from './viewport';
 import { InteractionController } from './interaction';
 import { AssetLoader } from './assetLoader';
-import { ShipFleetECS as ShipFleet } from './ecs';
+import { ShipFleetECS as ShipFleet, Position, Navigating, Combat, targetQuery } from './ecs';
+import { hasComponent } from 'bitecs/legacy';
 import { isRoadTile, isHillTile, isBeachTile, isDecorSprite, isTreeTile, isDecorationTile } from './tileUtils';
 import { gameEvents, GameEvent } from './eventBus';
 import { createSpritePool, createContainerPool } from './objectPool';
 import { LODManager } from './lodManager';
 import { DecorSpatialIndex } from './decorSpatialIndex';
+import { ProjectileManager } from './projectileManager';
+import { VfxManager } from './vfxManager';
 
 export class MapCanvasRenderer {
   /**
@@ -82,6 +85,12 @@ export class MapCanvasRenderer {
 
     // ── 装饰层空间索引（替代全量遍历+排序） ──
     this._decorIndex = new DecorSpatialIndex();
+
+    // ── 战斗子系统（弹道 + 特效） ──
+    /** @type {ProjectileManager|null} */
+    this._projectileManager = null;
+    /** @type {VfxManager|null} */
+    this._vfxManager = null;
 
     // ── 窗口 resize 监听 ──
     this._onResize = null;
@@ -456,12 +465,20 @@ export class MapCanvasRenderer {
     this._chunkContainers.set(key, container);
     this.mapContainer.addChild(container);
 
-    // 确保装饰层和船容器始终在所有区块容器之上
+    // 确保装饰层、船容器、弹药容器和特效容器始终在所有区块容器之上
+    // addChild 会将已有子元素移到末尾（最上层），保证渲染层级正确
     if (this._decorContainer) {
       this.mapContainer.addChild(this._decorContainer);
     }
     if (this._shipFleet) {
       this.mapContainer.addChild(this._shipFleet.container);
+    }
+    // 弹药和特效必须在最上层，否则会被区块容器遮挡
+    if (this._projectileContainer) {
+      this.mapContainer.addChild(this._projectileContainer);
+    }
+    if (this._vfxContainer) {
+      this.mapContainer.addChild(this._vfxContainer);
     }
 
     return container;
@@ -519,23 +536,33 @@ export class MapCanvasRenderer {
     // 缓存本帧可见集合，用于下一帧快速隐藏
     this._lastVisibleDecors = visibleDecors;
 
-    // 确保船容器在装饰层之上
+    // 确保渲染层级：装饰层 < 船容器 < 弹药容器 < 特效容器
     if (this._shipFleet) {
       this.mapContainer.addChild(this._shipFleet.container);
+    }
+    if (this._projectileContainer) {
+      this.mapContainer.addChild(this._projectileContainer);
+    }
+    if (this._vfxContainer) {
+      this.mapContainer.addChild(this._vfxContainer);
     }
   }
 
   /**
-   * 加载素材纹理（支持渐进式加载）
+   * 加载素材纹理
+   *
+   * 初始加载时使用非渐进式模式（progressive=false），等待所有纹理就绪后一次性渲染，
+   * 避免色块→真实图片的闪烁。后续如需热更新纹理可手动调用 loadAssets({ progressive: true })。
+   *
    * @param {object} [options]
    * @param {boolean} [options.useAtlas=true] - 是否启用精灵图集合并
-   * @param {boolean} [options.progressive=true] - 是否启用渐进式加载
-   *   - true: critical 纹理就绪后立即返回，后续纹理通过回调替换
-   *   - false: 等待所有纹理加载完成
+   * @param {boolean} [options.progressive=false] - 是否启用渐进式加载
+   *   - true: critical 纹理就绪后立即返回，后续纹理通过回调替换（适合后台热更新）
+   *   - false: 等待所有纹理加载完成后再渲染（适合初始加载，消除闪烁）
    * @returns {Promise<void>}
    */
   async loadAssets(options = {}) {
-    const { useAtlas = true, progressive = true } = options;
+    const { useAtlas = true, progressive = false } = options;
 
     // 添加 preload 提示，加速 critical 纹理下载
     this._preloadHints = AssetLoader.addPreloadHints();
@@ -559,13 +586,87 @@ export class MapCanvasRenderer {
       this._interaction.updateTileSize(this.tileSize);
     }
 
-    // 初始化船队（渐进式模式下船纹理可能是回退色块，后续会替换）
-    this._shipFleet = new ShipFleet(this.textures, this.tileSize, this._viewport.state);
+    // 初始化船队（传入攻击回调，海盗船发射弹药时触发）
+    this._shipFleet = new ShipFleet(
+      this.textures, this.tileSize, this._viewport.state,
+      (attackerEid, targetEid, startX, startY, targetX, targetY) => {
+        this._onShipAttack(attackerEid, targetEid, startX, startY, targetX, targetY);
+      }
+    );
     if (this.mapContainer && this._shipFleet.container) {
       this.mapContainer.addChild(this._shipFleet.container);
     }
     if (this.app?.ticker) {
       this._shipFleet.attachTicker(this.app.ticker);
+    }
+
+    // 初始化战斗子系统
+    // 弹药容器和特效容器独立于船容器，保证渲染层级正确
+    const projectileContainer = new PIXI.Container();
+    const vfxContainer = new PIXI.Container();
+    this._projectileContainer = projectileContainer;
+    this._vfxContainer = vfxContainer;
+    this.mapContainer.addChild(projectileContainer);
+    this.mapContainer.addChild(vfxContainer);
+
+    this._projectileManager = new ProjectileManager(
+      this.textures, projectileContainer,
+      (hitX, hitY, hitEid) => {
+        // 弹药命中 → 创建爆炸特效（传入 hitEid 以便火苗跟随船只，-1 表示脱靶）
+        if (this._vfxManager && hitEid >= 0) {
+          this._vfxManager.createExplosion(hitX, hitY, hitEid);
+        }
+      }
+    );
+
+    // VfxManager 需要 ECS 组件引用以实现火苗跟随船只
+    const ecsRefs = this._shipFleet ? {
+      Position,
+      Navigating,
+      world: this._shipFleet.world,
+      hasComponent,
+    } : null;
+    this._vfxManager = new VfxManager(this.textures, vfxContainer, ecsRefs);
+
+    // ProjectileManager 需要 ECS 组件引用以实现命中检测
+    if (this._shipFleet) {
+      this._projectileManager.setEcsRefs({
+        Position,
+        Combat,
+        world: this._shipFleet.world,
+        hasComponent,
+        shipQuery: targetQuery,
+      });
+    }
+
+    // 注册 Ticker 更新弹道和特效
+    if (this.app?.ticker) {
+      this._combatTickerFn = (deltaTime) => {
+        const dt = (deltaTime || 0) / 60;
+        if (this._projectileManager) this._projectileManager.update(dt);
+        if (this._vfxManager) this._vfxManager.update(dt);
+      };
+      this.app.ticker.add(this._combatTickerFn);
+    }
+  }
+
+  /**
+   * 海盗船攻击回调：发射弹药
+   * 由 combatSystem 蓄力完成时触发
+   * @private
+   */
+  _onShipAttack(attackerEid, targetEid, startX, startY, targetX, targetY) {
+    console.log(
+      `[Renderer] _onShipAttack called:`,
+      `attacker=${attackerEid}, target=${targetEid},`,
+      `from=(${startX.toFixed(1)}, ${startY.toFixed(1)}),`,
+      `to=(${targetX.toFixed(1)}, ${targetY.toFixed(1)}),`,
+      `projectileManager=${!!this._projectileManager}`,
+    );
+    if (this._projectileManager) {
+      this._projectileManager.fire(
+        attackerEid, targetEid, startX, startY, targetX, targetY
+      );
     }
   }
 
@@ -595,6 +696,13 @@ export class MapCanvasRenderer {
       if (this._shipFleet) {
         this._shipFleet.updateTextures(this.textures);
       }
+      // 更新战斗子系统纹理
+      if (this._projectileManager) {
+        this._projectileManager.updateTextures(this.textures);
+      }
+      if (this._vfxManager) {
+        this._vfxManager.updateTextures(this.textures);
+      }
       console.info('[Renderer] Progressive loading complete, all textures replaced');
       return;
     }
@@ -619,10 +727,20 @@ export class MapCanvasRenderer {
 
   /**
    * 初始渲染
+   *
+   * 渲染前先将画布设为不可见，所有区块渲染完成后通过淡入动画显示，
+   * 避免区块逐个出现或色块→图片的视觉跳变。
    */
   async renderInitial() {
     this._lastRenderedChunks = new Set();
     this._chunkContainers = new Map();
+
+    // 先隐藏画布，避免渲染过程中的视觉跳变
+    const canvas = this.app?.view;
+    if (canvas) {
+      canvas.style.opacity = '0';
+      canvas.style.transition = 'opacity 0.3s ease-in';
+    }
 
     const range = this._viewport.getVisibleTileRange();
     const chunks = await this.chunkManager.loadVisibleChunks(
@@ -637,6 +755,14 @@ export class MapCanvasRenderer {
 
     this._rebuildDecorLayer();
     this._viewport.applyTransform(this.mapContainer);
+
+    // 所有区块渲染完成，淡入画布
+    if (canvas) {
+      // 强制重排后再设置 opacity，确保 transition 生效
+      // eslint-disable-next-line no-unused-expressions
+      canvas.offsetHeight;
+      canvas.style.opacity = '1';
+    }
   }
 
   /**
@@ -821,6 +947,22 @@ export class MapCanvasRenderer {
    * 销毁渲染器，释放资源
    */
   destroy() {
+    // 清理战斗子系统
+    if (this._combatTickerFn && this.app?.ticker) {
+      this.app.ticker.remove(this._combatTickerFn);
+      this._combatTickerFn = null;
+    }
+    if (this._projectileManager) {
+      this._projectileManager.destroy();
+      this._projectileManager = null;
+    }
+    if (this._vfxManager) {
+      this._vfxManager.destroy();
+      this._vfxManager = null;
+    }
+    this._projectileContainer = null;
+    this._vfxContainer = null;
+
     // 清理船队
     if (this._shipFleet) {
       this._shipFleet.detachTicker(this.app.ticker);

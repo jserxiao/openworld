@@ -14,18 +14,20 @@
  *   PatrolBounds  - 巡逻范围 (minX, maxX, minY, maxY)
  *   ShipSprite    - 渲染相关 (spriteIndex, tileType)
  *   Navigating    - 航行行为 (heading, speed, turnTimer, turnInterval, driftPhase)
+ *   Combat        - 战斗行为 (cooldown, range, charging, stopped, targetEid)
  *
  * 系统清单：
- *   navigationSystem  - 航行更新（转向、移动、边界反弹）
+ *   navigationSystem  - 航行更新（转向、移动、边界反弹，停船时跳过）
  *   collisionSystem   - 碰撞检测与推离
+ *   combatSystem      - 战斗逻辑（搜索目标、停船蓄力、发射弹药）
  *   spriteSyncSystem  - 将 ECS 数据同步到 PIXI 精灵
  */
 
 import { createWorld, addEntity, removeEntity } from 'bitecs';
 import { defineComponent, Types, defineQuery, enterQuery, exitQuery,
-         addComponent, removeComponent } from 'bitecs/legacy';
+         addComponent, removeComponent, hasComponent } from 'bitecs/legacy';
 import * as PIXI from 'pixi.js';
-import { TILE, WATER_CONFIG } from './constants';
+import { TILE, WATER_CONFIG, NAVIGATION_CONFIG, COLLISION_CONFIG, COMBAT_RUNTIME_CONFIG, FLEET_CONFIG } from './constants';
 import { gameEvents, GameEvent } from './eventBus';
 import { SpatialHash } from './spatialHash';
 
@@ -71,6 +73,19 @@ export const Navigating = defineComponent({
   driftPhase: Types.f32,    // 波浪漂移相位
 });
 
+/** 战斗行为（仅海盗船拥有） */
+export const Combat = defineComponent({
+  cooldown: Types.f32,         // 攻击冷却计时器（秒）
+  cooldownMax: Types.f32,      // 攻击冷却间隔（秒）
+  range: Types.f32,            // 攻击范围（瓦片坐标单位）
+  charging: Types.f32,         // 停船蓄力计时器（>0 表示正在蓄力）
+  chargingMax: Types.f32,      // 蓄力所需时间（秒）
+  targetEid: Types.i32,        // 锁定的目标实体 ID（-1 表示无目标）
+  targetX: Types.f32,          // 蓄力时锁定的目标位置X（瓦片坐标）
+  targetY: Types.f32,          // 蓄力时锁定的目标位置Y（瓦片坐标）
+  stopped: Types.ui8,          // 是否处于停船状态 (0/1)
+});
+
 // ────────────────────────────────────────────
 // 查询定义 (Query)
 // ────────────────────────────────────────────
@@ -83,6 +98,15 @@ const shipEnterQuery = enterQuery(shipQuery);
 
 /** 退出查询的实体（用于清理精灵） */
 const shipExitQuery = exitQuery(shipQuery);
+
+/** 查询所有拥有战斗组件的实体（海盗船） */
+const combatQuery = defineQuery([Position, Navigating, ShipSprite, Combat]);
+
+/** 查询所有普通船实体（无战斗组件，用于寻找攻击目标） */
+const targetQuery = defineQuery([Position, Velocity, PatrolBounds, ShipSprite, Navigating]);
+
+// 导出 targetQuery 供命中检测使用（ProjectileManager 需要搜索附近实体）
+export { targetQuery };
 
 // ────────────────────────────────────────────
 // 系统 (System)
@@ -100,16 +124,23 @@ export const navigationSystem = defineSystem((world) => {
   for (let i = 0; i < ents.length; i++) {
     const eid = ents[i];
 
+    // 如果船只处于停船蓄力状态（Combat.stopped === 1），跳过航行更新
+    if (hasComponent(world, Combat, eid) && Combat.stopped[eid] === 1) {
+      Velocity.vx[eid] = 0;
+      Velocity.vy[eid] = 0;
+      continue;
+    }
+
     // 定期随机微调航向
     Navigating.turnTimer[eid] -= dt;
     if (Navigating.turnTimer[eid] <= 0) {
       Navigating.turnTimer[eid] = Navigating.turnInterval[eid];
-      Navigating.heading[eid] += (Math.random() - 0.5) * Math.PI / 3;
+      Navigating.heading[eid] += (Math.random() - 0.5) * NAVIGATION_CONFIG.turnAmplitude;
     }
 
     // 波浪微漂移
-    Navigating.driftPhase[eid] += 0.5 * dt;
-    const driftOffset = Math.sin(Navigating.driftPhase[eid]) * 0.02;
+    Navigating.driftPhase[eid] += NAVIGATION_CONFIG.driftRate * dt;
+    const driftOffset = Math.sin(Navigating.driftPhase[eid]) * NAVIGATION_CONFIG.driftAmplitude;
     const effectiveHeading = Navigating.heading[eid] + driftOffset;
 
     // 根据航向计算速度分量
@@ -144,7 +175,7 @@ export const navigationSystem = defineSystem((world) => {
       const cx = (PatrolBounds.minX[eid] + PatrolBounds.maxX[eid]) / 2;
       const cy = (PatrolBounds.minY[eid] + PatrolBounds.maxY[eid]) / 2;
       const toCenterAngle = Math.atan2(cx - Position.x[eid], -(cy - Position.y[eid]));
-      Navigating.heading[eid] = toCenterAngle + (Math.random() - 0.5) * Math.PI / 1.5;
+      Navigating.heading[eid] = toCenterAngle + (Math.random() - 0.5) * NAVIGATION_CONFIG.bounceHeadingOffset;
     }
   }
 
@@ -162,7 +193,7 @@ export const navigationSystem = defineSystem((world) => {
  */
 export const collisionSystem = (spatialHash) => defineSystem((world) => {
   const ents = shipQuery(world);
-  const minDist = 1.8;
+  const minDist = COLLISION_CONFIG.minDist;
   const minDistSq = minDist * minDist;
 
   // 重建空间哈希（每帧清空 + 重新插入）
@@ -183,7 +214,7 @@ export const collisionSystem = (spatialHash) => defineSystem((world) => {
 
     // 推离
     if (dist < minDist) {
-      const pushAmount = (minDist - dist) * 0.5 + 0.05;
+      const pushAmount = (minDist - dist) * COLLISION_CONFIG.pushFactor + COLLISION_CONFIG.pushBase;
       Position.x[a] += Math.sin(pushAngle) * pushAmount;
       Position.y[a] -= Math.cos(pushAngle) * pushAmount;
       Position.x[b] -= Math.sin(pushAngle) * pushAmount;
@@ -191,8 +222,8 @@ export const collisionSystem = (spatialHash) => defineSystem((world) => {
     }
 
     // 碰撞时改变航向
-    Navigating.heading[a] = pushAngle + (Math.random() - 0.5) * Math.PI / 3;
-    Navigating.heading[b] = pushAngle + Math.PI + (Math.random() - 0.5) * Math.PI / 3;
+    Navigating.heading[a] = pushAngle + (Math.random() - 0.5) * COLLISION_CONFIG.headingOffset;
+    Navigating.heading[b] = pushAngle + Math.PI + (Math.random() - 0.5) * COLLISION_CONFIG.headingOffset;
 
     // 发出碰撞事件
     gameEvents.emit(GameEvent.SHIP_COLLISION, { entityA: a, entityB: b });
@@ -224,6 +255,146 @@ export const spriteSyncSystem = (spriteRefs) => defineSystem((world) => {
   return world;
 });
 
+/**
+ * 战斗系统：海盗船搜索目标 → 停船蓄力 → 发射弹药
+ *
+ * 攻击流程：
+ * 1. 冷却结束 → 搜索最近普通船作为目标
+ * 2. 开始停船蓄力（speed 归零，charging 递增）
+ * 3. 蓄力完成 → 发出 SHIP_ATTACK 事件 → 重置冷却
+ * 4. 蓄力/攻击期间不移动
+ *
+ * @param {Function} onAttack - 攻击回调 (attackerEid, targetEid, startX, startY, targetX, targetY) => void
+ * @returns {Function}
+ */
+export const combatSystem = (onAttack) => defineSystem((world) => {
+  const pirates = combatQuery(world);
+  const allShips = targetQuery(world);
+  const dt = world.dt || 0;
+
+  // 预过滤：只收集没有 Combat 组件的普通船（避免每帧重复 hasComponent 调用）
+  const normalShips = [];
+  for (let j = 0; j < allShips.length; j++) {
+    const tid = allShips[j];
+    if (!hasComponent(world, Combat, tid)) {
+      normalShips.push(tid);
+    }
+  }
+
+  for (let i = 0; i < pirates.length; i++) {
+    const eid = pirates[i];
+
+    // 冷却中
+    if (Combat.cooldown[eid] > 0) {
+      Combat.cooldown[eid] -= dt;
+      // 冷却期间恢复航行
+      if (Combat.stopped[eid] === 1) {
+        Combat.stopped[eid] = 0;
+      }
+      continue;
+    }
+
+    // 正在蓄力（停船状态）
+    if (Combat.charging[eid] > 0) {
+      Combat.charging[eid] += dt;
+
+      // 停船：将速度归零
+      Navigating.speed[eid] = 0;
+      Velocity.vx[eid] = 0;
+      Velocity.vy[eid] = 0;
+
+      // 安全兜底：chargingMax 不应 <= 0
+      const chargingMax = Combat.chargingMax[eid] > 0 ? Combat.chargingMax[eid] : COMBAT_RUNTIME_CONFIG.chargingMaxDefault;
+
+      // 蓄力完成 → 发射
+      if (Combat.charging[eid] >= chargingMax) {
+        const targetEid = Combat.targetEid[eid];
+
+        // 获取发射位置
+        const startX = Position.x[eid];
+        const startY = Position.y[eid];
+
+        // 使用蓄力时锁定的目标位置（不再跟踪目标当前位置）
+        // 目标在蓄力期间移动了 → 弹药打偏；目标未移动 → 命中
+        const targetX = Combat.targetX[eid];
+        const targetY = Combat.targetY[eid];
+
+        // 发出攻击
+        console.log(
+          `[Combat] Pirate#${eid} fires!`,
+          `from (${startX.toFixed(1)}, ${startY.toFixed(1)})`,
+          `to (${targetX.toFixed(1)}, ${targetY.toFixed(1)})`,
+        );
+        if (onAttack) {
+          onAttack(eid, targetEid, startX, startY, targetX, targetY);
+        } else {
+          console.warn(`[Combat] onAttack callback is missing!`);
+        }
+
+        // 重置状态
+        Combat.charging[eid] = 0;
+        Combat.targetEid[eid] = -1;
+        Combat.targetX[eid] = 0;
+        Combat.targetY[eid] = 0;
+        Combat.cooldown[eid] = Combat.cooldownMax[eid] > 0 ? Combat.cooldownMax[eid] : 5;
+        Combat.stopped[eid] = 0;
+
+        // 恢复航行速度
+        Navigating.speed[eid] = COMBAT_RUNTIME_CONFIG.speedMin + Math.random() * COMBAT_RUNTIME_CONFIG.speedRange;
+      }
+      continue;
+    }
+
+    // 寻找目标：在普通船中搜索最近的
+    let bestTarget = -1;
+    const range = Combat.range[eid] > 0 ? Combat.range[eid] : 40;
+    let bestDistSq = range * range;
+
+    for (let j = 0; j < normalShips.length; j++) {
+      const tid = normalShips[j];
+
+      const dx = Position.x[tid] - Position.x[eid];
+      const dy = Position.y[tid] - Position.y[eid];
+      const distSq = dx * dx + dy * dy;
+
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestTarget = tid;
+      }
+    }
+
+    // 找到目标 → 开始蓄力
+    if (bestTarget >= 0) {
+      Combat.targetEid[eid] = bestTarget;
+      Combat.charging[eid] = COMBAT_RUNTIME_CONFIG.chargingStart; // 开始蓄力（>0 标记蓄力中）
+      Combat.stopped[eid] = 1;
+
+      // 锁定目标当前位置（蓄力期间目标移动会导致弹药打偏）
+      Combat.targetX[eid] = Position.x[bestTarget];
+      Combat.targetY[eid] = Position.y[bestTarget];
+
+      if (Combat.chargingMax[eid] <= 0) {
+        Combat.chargingMax[eid] = COMBAT_RUNTIME_CONFIG.chargingMaxDefault; // 安全兜底
+      }
+
+      // 立即停船
+      Navigating.speed[eid] = 0;
+      Velocity.vx[eid] = 0;
+      Velocity.vy[eid] = 0;
+
+      console.log(
+        `[Combat] Pirate#${eid} targeting Ship#${bestTarget},`,
+        `dist=${Math.sqrt(bestDistSq).toFixed(1)} tiles,`,
+        `chargingMax=${Combat.chargingMax[eid].toFixed(2)}s,`,
+        `piratePos=(${Position.x[eid].toFixed(1)}, ${Position.y[eid].toFixed(1)}),`,
+        `targetPos=(${Position.x[bestTarget].toFixed(1)}, ${Position.y[bestTarget].toFixed(1)})`,
+      );
+    }
+  }
+
+  return world;
+});
+
 // ────────────────────────────────────────────
 // ShipFleet ECS 版本
 // ────────────────────────────────────────────
@@ -237,8 +408,10 @@ export class ShipFleetECS {
    * @param {object} textures - 瓦片纹理映射
    * @param {{ w: number, h: number }} tileSize - 瓦片像素尺寸
    * @param {{ x: number, y: number, zoom: number }} viewport - 初始视口
+   * @param {Function} [onAttack] - 攻击回调，海盗船发射弹药时触发
+   *   签名: (attackerEid, targetEid, startX, startY, targetX, targetY) => void
    */
-  constructor(textures, tileSize, viewport) {
+  constructor(textures, tileSize, viewport, onAttack) {
     /** @type {import('bitecs').World} */
     this.world = createWorld();
     this.world.dt = 0;
@@ -262,6 +435,9 @@ export class ShipFleetECS {
 
     // 创建精灵同步系统（绑定 spriteRefs）
     this._spriteSyncSystem = spriteSyncSystem(this._spriteRefs);
+
+    // 创建战斗系统（绑定攻击回调）
+    this._combatSystem = combatSystem(onAttack);
 
     // 生成船队
     this._createFleet();
@@ -328,26 +504,26 @@ export class ShipFleetECS {
     const waterMinY = -halfViewY * 3;
     const waterMaxY = halfViewY * 3;
 
-    const shipCount = 15 + Math.floor(Math.random() * 10);
+    const shipCount = FLEET_CONFIG.shipCountMin + Math.floor(Math.random() * FLEET_CONFIG.shipCountRange);
 
     for (let i = 0; i < shipCount; i++) {
-      const isPirate = Math.random() < 0.35;
+      const isPirate = Math.random() < FLEET_CONFIG.pirateChance;
       const texture = isPirate ? pirateTexture : shipTexture;
       if (!texture) continue;
 
       // 随机初始位置
       let x;
       const posRoll = Math.random();
-      if (posRoll < 0.5) {
-        x = waterMinX + Math.random() * 8;
-      } else if (posRoll < 0.8) {
-        x = waterMinX + 8 + Math.random() * 20;
+      if (posRoll < FLEET_CONFIG.posNearWeight) {
+        x = waterMinX + Math.random() * FLEET_CONFIG.nearRange;
+      } else if (posRoll < FLEET_CONFIG.posMidWeight) {
+        x = waterMinX + FLEET_CONFIG.midStart + Math.random() * FLEET_CONFIG.midRange;
       } else {
-        x = waterMinX + 28 + Math.random() * 70;
+        x = waterMinX + FLEET_CONFIG.farStart + Math.random() * FLEET_CONFIG.farRange;
       }
 
       const y = waterMinY + Math.random() * (waterMaxY - waterMinY);
-      const speed = isPirate ? (0.5 + Math.random() * 0.8) : (0.3 + Math.random() * 0.6);
+      const speed = isPirate ? (FLEET_CONFIG.pirateSpeedMin + Math.random() * FLEET_CONFIG.pirateSpeedRange) : (FLEET_CONFIG.shipSpeedMin + Math.random() * FLEET_CONFIG.shipSpeedRange);
 
       // 创建 PIXI 精灵
       const sprite = new PIXI.Sprite(texture);
@@ -393,6 +569,20 @@ export class ShipFleetECS {
       Navigating.turnTimer[eid] = 1 + Math.random() * 3;
       Navigating.turnInterval[eid] = 1 + Math.random() * 4;
       Navigating.driftPhase[eid] = Math.random() * Math.PI * 2;
+
+      // 海盗船拥有战斗能力
+      if (isPirate) {
+        addComponent(this.world, Combat, eid);
+        Combat.cooldown[eid] = FLEET_CONFIG.cooldownMin + Math.random() * FLEET_CONFIG.cooldownRange; // 初始随机冷却，较快进入战斗
+        Combat.cooldownMax[eid] = FLEET_CONFIG.cooldownMaxMin + Math.random() * FLEET_CONFIG.cooldownMaxRange; // 攻击间隔
+        Combat.range[eid] = FLEET_CONFIG.rangeMin + Math.random() * FLEET_CONFIG.rangeRange; // 攻击范围（水域跨度大）
+        Combat.charging[eid] = 0;
+        Combat.chargingMax[eid] = FLEET_CONFIG.chargingMaxMin + Math.random() * FLEET_CONFIG.chargingMaxRange; // 蓄力时间
+        Combat.targetEid[eid] = -1;
+        Combat.targetX[eid] = 0;
+        Combat.targetY[eid] = 0;
+        Combat.stopped[eid] = 0;
+      }
     }
   }
 
@@ -401,6 +591,26 @@ export class ShipFleetECS {
    * @param {PIXI.Ticker} ticker
    */
   attachTicker(ticker) {
+    // 诊断：打印战斗系统初始化状态
+    const pirates = combatQuery(this.world);
+    const allShips = targetQuery(this.world);
+    const normalShips = allShips.filter(eid => !hasComponent(this.world, Combat, eid));
+    console.log(
+      `[Combat] Fleet initialized: ${allShips.length} ships total,`,
+      `${pirates.length} pirates (with Combat),`,
+      `${normalShips.length} normal ships (targets)`,
+    );
+    if (pirates.length > 0) {
+      for (let i = 0; i < pirates.length; i++) {
+        const eid = pirates[i];
+        console.log(
+          `  Pirate#${eid}: range=${Combat.range[eid].toFixed(1)},`,
+          `cooldown=${Combat.cooldown[eid].toFixed(1)}s,`,
+          `pos=(${Position.x[eid].toFixed(1)}, ${Position.y[eid].toFixed(1)})`,
+        );
+      }
+    }
+
     this._tickerFn = (deltaTime) => {
       const dt = (deltaTime || 0) / 60;
       this.world.dt = dt;
@@ -408,6 +618,7 @@ export class ShipFleetECS {
       // 依次执行所有 ECS 系统
       navigationSystem(this.world);
       this._collisionSystem(this.world);
+      this._combatSystem(this.world);
       this._spriteSyncSystem(this.world);
 
       // 处理已退出的实体（清理精灵）

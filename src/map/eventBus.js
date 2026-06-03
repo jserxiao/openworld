@@ -8,15 +8,18 @@
  *   gameEvents.emit('viewport:moved', { x, y, zoom });
  *
  * 事件清单：
- *   viewport:moved    - 视口位置/缩放变化
- *   viewport:info     - 视口信息定时上报（供 HUD 显示）
- *   chunk:ready       - 区块数据生成完毕
- *   chunk:rendered    - 区块容器渲染完毕
- *   chunk:removed     - 区块容器被移除
- *   decor:rebuild     - 装饰层需要重建
- *   ship:collision    - 船只碰撞事件
- *   tile:hover        - 瓦片悬停
- *   asset:loaded      - 素材加载完成
+ *   viewport:moved        - 视口位置/缩放变化
+ *   viewport:info         - 视口信息定时上报（供 HUD 显示）
+ *   chunk:ready           - 区块数据生成完毕
+ *   chunk:rendered        - 区块容器渲染完毕
+ *   chunk:removed         - 区块容器被移除
+ *   decor:rebuild         - 装饰层需要重建
+ *   ship:collision        - 船只碰撞事件
+ *   ship:attack           - 海盗船发起攻击
+ *   ship:hit              - 弹药命中目标
+ *   ship:destroyed        - 船只被摧毁
+ *   tile:hover            - 瓦片悬停
+ *   asset:loaded          - 素材加载完成
  */
 
 import mitt from 'mitt';
@@ -35,6 +38,9 @@ export const GameEvent = {
   CHUNK_REMOVED: 'chunk:removed',
   DECOR_REBUILD: 'decor:rebuild',
   SHIP_COLLISION: 'ship:collision',
+  SHIP_ATTACK: 'ship:attack',
+  SHIP_HIT: 'ship:hit',
+  SHIP_DESTROYED: 'ship:destroyed',
   TILE_HOVER: 'tile:hover',
   ASSET_LOADED: 'asset:loaded',
 };

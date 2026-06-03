@@ -50,11 +50,6 @@ export default function App() {
           </div>
         )}
       </div>
-
-      {/* 操作提示 */}
-      <div className="hud-hint">
-        🖱️ 拖拽移动 | 🔄 滚轮缩放
-      </div>
     </>
   );
 }
